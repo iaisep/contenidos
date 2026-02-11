@@ -15,13 +15,6 @@ spring:
     name: uisep-slide-api
   
   # ============================================
-  # Jackson - Aumentar límite para slides grandes (>20MB)
-  # ============================================
-  jackson:
-    parser:
-      max-string-length: 104857600  # 100MB
-  
-  # ============================================
   # DATASOURCE PRIMARIO: Réplica PostgreSQL (SOLO LECTURA)
   # Contenedor: postgres-replica-i4s8o8000kc040cgwcwowwwc
   # Red Docker: i4s8o8000kc040cgwcwowwwc
