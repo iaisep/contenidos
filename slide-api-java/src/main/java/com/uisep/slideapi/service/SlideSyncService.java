@@ -436,6 +436,23 @@ public class SlideSyncService {
     }
     
     /**
+     * Resetea slides que quedaron atascados en estado PROCESSING.
+     */
+    @Transactional("processedTransactionManager")
+    public int resetStuckSlides() {
+        List<SlideProcessingStatus> stuck = processingStatusRepo.findByStatus(
+            SlideProcessingStatus.ProcessingStatus.PROCESSING);
+        
+        for (SlideProcessingStatus status : stuck) {
+            status.setStatus(SlideProcessingStatus.ProcessingStatus.PENDING);
+            processingStatusRepo.save(status);
+        }
+        
+        log.info("Reseteados {} slides que estaban en PROCESSING", stuck.size());
+        return stuck.size();
+    }
+    
+    /**
      * Obtiene el progreso actual de la sincronización.
      */
     public SyncProgressStats getSyncProgress() {

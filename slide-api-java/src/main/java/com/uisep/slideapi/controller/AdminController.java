@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Controller para operaciones de administración: sincronización y migración.
@@ -62,6 +63,14 @@ public class AdminController {
                description = "Obtiene estadísticas del progreso del tracking de sincronización")
     public ResponseEntity<?> getSyncProgress() {
         return ResponseEntity.ok(syncService.getSyncProgress());
+    }
+    
+    @PostMapping("/sync/reset-stuck")
+    @Operation(summary = "Resetear slides atascados", 
+               description = "Resetea slides que quedaron en estado PROCESSING a PENDING")
+    public ResponseEntity<?> resetStuckSlides() {
+        int reset = syncService.resetStuckSlides();
+        return ResponseEntity.ok(Map.of("message", "Slides reseteados", "count", reset));
     }
     
     @GetMapping("/health")
