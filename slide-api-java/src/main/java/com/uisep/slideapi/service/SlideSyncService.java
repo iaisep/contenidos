@@ -93,11 +93,11 @@ public class SlideSyncService {
     /**
      * Sincroniza todos los slides activos desde la réplica.
      * Usa tracking para procesar slide por slide y permitir reanudar.
+     * SIN @Transactional aquí - cada slide tiene su propia transacción.
      * 
      * @param activeOnly Si true, solo procesa slides activos
      * @return Resultado de la sincronización
      */
-    @Transactional("processedTransactionManager")
     public SyncResult syncAllSlides(boolean activeOnly) {
         LocalDateTime startTime = LocalDateTime.now();
         long startMs = System.currentTimeMillis();
@@ -127,67 +127,27 @@ public class SlideSyncService {
         log.info("Iniciando sincronización: {} slides pendientes...", totalSlides);
         
         for (Integer slideId : slideIds) {
-            SlideProcessingStatus trackingStatus = processingStatusRepo.findById(slideId)
-                .orElse(SlideProcessingStatus.builder()
-                    .slideId(slideId)
-                    .status(SlideProcessingStatus.ProcessingStatus.PENDING)
-                    .retryCount(0)
-                    .build());
-            
             try {
-                // Marcar como en proceso
-                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.PROCESSING);
-                trackingStatus.setStartedAt(LocalDateTime.now());
-                processingStatusRepo.saveAndFlush(trackingStatus);
-                
-                // Cargar slide individualmente
-                SlideSlideReplica replica = replicaSlideRepo.findById(slideId).orElse(null);
-                if (replica == null) {
-                    log.warn("Slide {} no encontrado en réplica", slideId);
-                    trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
-                    trackingStatus.setFailedAt(LocalDateTime.now());
-                    trackingStatus.setErrorMessage("Slide no encontrado en réplica");
-                    processingStatusRepo.saveAndFlush(trackingStatus);
-                    failed++;
-                    continue;
-                }
-                
-                // Procesar slide
-                MigrationResult result = processSlide(replica, channelNames);
-                
-                // Actualizar tracking como completado
-                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.COMPLETED);
-                trackingStatus.setCompletedAt(LocalDateTime.now());
-                trackingStatus.setOriginalSizeBytes(result.getOriginalSize());
-                trackingStatus.setProcessedSizeBytes(result.getNewSize());
-                trackingStatus.setImagesExtracted(result.getImagesExtracted());
-                processingStatusRepo.saveAndFlush(trackingStatus);
+                // Procesar en transacción individual
+                MigrationResult result = processSingleSlideWithTracking(slideId, channelNames);
                 
                 migrationResults.add(result);
                 
                 if ("CREATED".equals(result.getStatus())) created++;
                 else if ("UPDATED".equals(result.getStatus())) updated++;
+                else if ("FAILED".equals(result.getStatus())) failed++;
                 
                 totalOriginalSize += result.getOriginalSize() != null ? result.getOriginalSize() : 0;
                 totalProcessedSize += result.getNewSize() != null ? result.getNewSize() : 0;
                 
             } catch (Exception e) {
-                log.error("Error procesando slide {}: {}", slideId, e.getMessage(), e);
-                
-                // Marcar como fallido
-                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
-                trackingStatus.setFailedAt(LocalDateTime.now());
-                trackingStatus.setErrorMessage(e.getMessage() != null ? 
-                    e.getMessage().substring(0, Math.min(1999, e.getMessage().length())) : "Error desconocido");
-                trackingStatus.setRetryCount(trackingStatus.getRetryCount() + 1);
-                processingStatusRepo.saveAndFlush(trackingStatus);
-                
+                log.error("Error crítico procesando slide {}: {}", slideId, e.getMessage());
                 failed++;
                 migrationResults.add(MigrationResult.builder()
                     .slideId(slideId)
                     .slideName("Unknown")
                     .status("FAILED")
-                    .message(e.getMessage())
+                    .message("Error crítico: " + e.getMessage())
                     .processedAt(LocalDateTime.now())
                     .build());
             }
@@ -229,6 +189,116 @@ public class SlideSyncService {
             .totalProcessedSize(totalProcessedSize)
             .migrationResults(migrationResults)
             .build();
+    }
+    
+    /**
+     * Procesa un slide individual con su propia transacción.
+     * Cada slide se guarda independientemente - si falla, no afecta a los demás.
+     */
+    @Transactional("processedTransactionManager")
+    public MigrationResult processSingleSlideWithTracking(Integer slideId, Map<Integer, String> channelNames) {
+        SlideProcessingStatus trackingStatus = processingStatusRepo.findById(slideId)
+            .orElse(SlideProcessingStatus.builder()
+                .slideId(slideId)
+                .status(SlideProcessingStatus.ProcessingStatus.PENDING)
+                .retryCount(0)
+                .build());
+        
+        try {
+            // Marcar como en proceso
+            trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.PROCESSING);
+            trackingStatus.setStartedAt(LocalDateTime.now());
+            processingStatusRepo.saveAndFlush(trackingStatus);
+            
+            // Cargar slide individualmente
+            SlideSlideReplica replica = replicaSlideRepo.findById(slideId).orElse(null);
+            if (replica == null) {
+                log.warn("Slide {} no encontrado en réplica", slideId);
+                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+                trackingStatus.setFailedAt(LocalDateTime.now());
+                trackingStatus.setErrorMessage("Slide no encontrado en réplica");
+                processingStatusRepo.saveAndFlush(trackingStatus);
+                
+                return MigrationResult.builder()
+                    .slideId(slideId)
+                    .slideName("Unknown")
+                    .status("FAILED")
+                    .message("No encontrado en réplica")
+                    .processedAt(LocalDateTime.now())
+                    .build();
+            }
+            
+            // Procesar slide
+            MigrationResult result = processSlide(replica, channelNames);
+            
+            // Actualizar tracking como completado
+            trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.COMPLETED);
+            trackingStatus.setCompletedAt(LocalDateTime.now());
+            trackingStatus.setOriginalSizeBytes(result.getOriginalSize());
+            trackingStatus.setProcessedSizeBytes(result.getNewSize());
+            trackingStatus.setImagesExtracted(result.getImagesExtracted());
+            processingStatusRepo.saveAndFlush(trackingStatus);
+            
+            return result;
+            
+        } catch (com.fasterxml.jackson.core.exc.StreamConstraintsException e) {
+            // Error específico: contenido muy grande
+            log.error("Slide {}: Contenido excede límite Jackson (>20MB): {}", slideId, e.getMessage());
+            
+            trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+            trackingStatus.setFailedAt(LocalDateTime.now());
+            trackingStatus.setErrorMessage("Contenido > 20MB - Jackson limit");
+            trackingStatus.setRetryCount(trackingStatus.getRetryCount() + 1);
+            processingStatusRepo.saveAndFlush(trackingStatus);
+            
+            return MigrationResult.builder()
+                .slideId(slideId)
+                .slideName("Unknown")
+                .status("FAILED")
+                .message("Contenido HTML > 20MB")
+                .processedAt(LocalDateTime.now())
+                .build();
+                
+        } catch (OutOfMemoryError e) {
+            // Error de memoria
+            log.error("Slide {}: OutOfMemoryError - slide demasiado grande", slideId);
+            
+            trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+            trackingStatus.setFailedAt(LocalDateTime.now());
+            trackingStatus.setErrorMessage("OutOfMemory - contenido muy grande");
+            trackingStatus.setRetryCount(trackingStatus.getRetryCount() + 1);
+            processingStatusRepo.saveAndFlush(trackingStatus);
+            
+            // Forzar GC para recuperar memoria
+            System.gc();
+            
+            return MigrationResult.builder()
+                .slideId(slideId)
+                .slideName("Unknown")
+                .status("FAILED")
+                .message("OutOfMemory - slide muy grande")
+                .processedAt(LocalDateTime.now())
+                .build();
+                
+        } catch (Exception e) {
+            log.error("Error procesando slide {}: {}", slideId, e.getMessage(), e);
+            
+            // Marcar como fallido
+            trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+            trackingStatus.setFailedAt(LocalDateTime.now());
+            trackingStatus.setErrorMessage(e.getMessage() != null ? 
+                e.getMessage().substring(0, Math.min(1999, e.getMessage().length())) : "Error desconocido");
+            trackingStatus.setRetryCount(trackingStatus.getRetryCount() + 1);
+            processingStatusRepo.saveAndFlush(trackingStatus);
+            
+            return MigrationResult.builder()
+                .slideId(slideId)
+                .slideName("Unknown")
+                .status("FAILED")
+                .message(e.getMessage())
+                .processedAt(LocalDateTime.now())
+                .build();
+        }
     }
     
     /**
