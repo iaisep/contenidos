@@ -10,6 +10,13 @@ spring:
     name: uisep-slide-api
   
   # ============================================
+  # Jackson - Aumentar límite para slides grandes (>20MB)
+  # ============================================
+  jackson:
+    parser:
+      max-string-length: 104857600  # 100MB
+  
+  # ============================================
   # DATASOURCE PRIMARIO: Réplica PostgreSQL (SOLO LECTURA)
   # IP del servidor: 192.168.100.57
   # ============================================
