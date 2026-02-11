@@ -3,11 +3,13 @@ package com.uisep.slideapi.service;
 import com.uisep.slideapi.dto.SlideDTO.*;
 import com.uisep.slideapi.entity.processed.ProcessedChannel;
 import com.uisep.slideapi.entity.processed.ProcessedSlide;
+import com.uisep.slideapi.entity.processed.SlideProcessingStatus;
 import com.uisep.slideapi.entity.replica.SlideChannelReplica;
 import com.uisep.slideapi.entity.replica.SlideSlideReplica;
 import com.uisep.slideapi.repository.processed.ProcessedChannelRepository;
 import com.uisep.slideapi.repository.processed.ProcessedSlideRepository;
 import com.uisep.slideapi.repository.processed.SlideImageRepository;
+import com.uisep.slideapi.repository.processed.SlideProcessingStatusRepository;
 import com.uisep.slideapi.repository.replica.SlideChannelReplicaRepository;
 import com.uisep.slideapi.repository.replica.SlideSlideReplicaRepository;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,7 @@ public class SlideSyncService {
     private final ProcessedSlideRepository processedSlideRepo;
     private final ProcessedChannelRepository processedChannelRepo;
     private final SlideImageRepository imageRepo;
+    private final SlideProcessingStatusRepository processingStatusRepo;
     private final Base64ImageExtractor imageExtractor;
     
     @Value("${migration.base64.batch-size:10}")
@@ -62,8 +65,34 @@ public class SlideSyncService {
     }
     
     /**
+     * Inicializa tabla de tracking con todos los slides activos.
+     * Solo crea registros para slides que no existen en el tracking.
+     */
+    @Transactional("processedTransactionManager")
+    public void initializeTracking() {
+        List<Integer> activeSlideIds = replicaSlideRepo.findActiveSlideIds();
+        int initialized = 0;
+        
+        log.info("Inicializando tracking para {} slides activos...", activeSlideIds.size());
+        
+        for (Integer slideId : activeSlideIds) {
+            if (!processingStatusRepo.existsById(slideId)) {
+                SlideProcessingStatus status = SlideProcessingStatus.builder()
+                    .slideId(slideId)
+                    .status(SlideProcessingStatus.ProcessingStatus.PENDING)
+                    .retryCount(0)
+                    .build();
+                processingStatusRepo.save(status);
+                initialized++;
+            }
+        }
+        
+        log.info("Tracking inicializado: {} nuevos registros", initialized);
+    }
+    
+    /**
      * Sincroniza todos los slides activos desde la réplica.
-     * Usa IDs para evitar cargar contenido HTML grande en memoria.
+     * Usa tracking para procesar slide por slide y permitir reanudar.
      * 
      * @param activeOnly Si true, solo procesa slides activos
      * @return Resultado de la sincronización
@@ -80,23 +109,60 @@ public class SlideSyncService {
         // Cargar canales para enriquecer nombres
         Map<Integer, String> channelNames = loadChannelNames();
         
-        // Obtener solo IDs para evitar cargar html_content en memoria
-        List<Integer> slideIds = replicaSlideRepo.findActiveSlideIds();
+        // 1. Inicializar tracking si es necesario
+        initializeTracking();
+        
+        // 2. Resetear slides que quedaron en PROCESSING (por interrupciones previas)
+        List<SlideProcessingStatus> stuckInProcessing = processingStatusRepo.findByStatus(
+            SlideProcessingStatus.ProcessingStatus.PROCESSING);
+        for (SlideProcessingStatus stuck : stuckInProcessing) {
+            stuck.setStatus(SlideProcessingStatus.ProcessingStatus.PENDING);
+            processingStatusRepo.save(stuck);
+        }
+        
+        // 3. Obtener slides pendientes o fallidos
+        List<Integer> slideIds = processingStatusRepo.findPendingSlideIds();
         int totalSlides = slideIds.size();
         
-        log.info("Iniciando sincronización de {} slides...", totalSlides);
+        log.info("Iniciando sincronización: {} slides pendientes...", totalSlides);
         
-        int batchNum = 0;
         for (Integer slideId : slideIds) {
+            SlideProcessingStatus trackingStatus = processingStatusRepo.findById(slideId)
+                .orElse(SlideProcessingStatus.builder()
+                    .slideId(slideId)
+                    .status(SlideProcessingStatus.ProcessingStatus.PENDING)
+                    .retryCount(0)
+                    .build());
+            
             try {
+                // Marcar como en proceso
+                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.PROCESSING);
+                trackingStatus.setStartedAt(LocalDateTime.now());
+                processingStatusRepo.saveAndFlush(trackingStatus);
+                
                 // Cargar slide individualmente
                 SlideSlideReplica replica = replicaSlideRepo.findById(slideId).orElse(null);
                 if (replica == null) {
-                    log.warn("Slide {} no encontrado", slideId);
+                    log.warn("Slide {} no encontrado en réplica", slideId);
+                    trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+                    trackingStatus.setFailedAt(LocalDateTime.now());
+                    trackingStatus.setErrorMessage("Slide no encontrado en réplica");
+                    processingStatusRepo.saveAndFlush(trackingStatus);
+                    failed++;
                     continue;
                 }
                 
+                // Procesar slide
                 MigrationResult result = processSlide(replica, channelNames);
+                
+                // Actualizar tracking como completado
+                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.COMPLETED);
+                trackingStatus.setCompletedAt(LocalDateTime.now());
+                trackingStatus.setOriginalSizeBytes(result.getOriginalSize());
+                trackingStatus.setProcessedSizeBytes(result.getNewSize());
+                trackingStatus.setImagesExtracted(result.getImagesExtracted());
+                processingStatusRepo.saveAndFlush(trackingStatus);
+                
                 migrationResults.add(result);
                 
                 if ("CREATED".equals(result.getStatus())) created++;
@@ -106,7 +172,16 @@ public class SlideSyncService {
                 totalProcessedSize += result.getNewSize() != null ? result.getNewSize() : 0;
                 
             } catch (Exception e) {
-                log.error("Error procesando slide {}: {}", slideId, e.getMessage());
+                log.error("Error procesando slide {}: {}", slideId, e.getMessage(), e);
+                
+                // Marcar como fallido
+                trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+                trackingStatus.setFailedAt(LocalDateTime.now());
+                trackingStatus.setErrorMessage(e.getMessage() != null ? 
+                    e.getMessage().substring(0, Math.min(1999, e.getMessage().length())) : "Error desconocido");
+                trackingStatus.setRetryCount(trackingStatus.getRetryCount() + 1);
+                processingStatusRepo.saveAndFlush(trackingStatus);
+                
                 failed++;
                 migrationResults.add(MigrationResult.builder()
                     .slideId(slideId)
@@ -119,9 +194,15 @@ public class SlideSyncService {
             
             totalProcessed++;
             
-            // Log progreso cada 100 slides
-            if (totalProcessed % 100 == 0) {
-                log.info("Progreso: {}/{} slides procesados", totalProcessed, totalSlides);
+            // Log progreso cada 50 slides (más frecuente para mejor visibilidad)
+            if (totalProcessed % 50 == 0) {
+                long elapsed = System.currentTimeMillis() - startMs;
+                double rate = totalProcessed / (elapsed / 1000.0);
+                int remaining = totalSlides - totalProcessed;
+                int etaSeconds = (int) (remaining / rate);
+                
+                log.info("Progreso: {}/{} slides ({} creados, {} actualizados, {} fallidos) - {:.1f} slides/seg - ETA: {}s",
+                    totalProcessed, totalSlides, created, updated, failed, rate, etaSeconds);
             }
             
             // Limitar resultados en memoria
@@ -351,6 +432,28 @@ public class SlideSyncService {
             .savingsPercentage(savingsPercentage)
             .totalImagesExtracted(totalImagesExtracted)
             .pendingActions(pending)
+            .build();
+    }
+    
+    /**
+     * Obtiene el progreso actual de la sincronización.
+     */
+    public SyncProgressStats getSyncProgress() {
+        long pending = processingStatusRepo.countByStatus(SlideProcessingStatus.ProcessingStatus.PENDING);
+        long processing = processingStatusRepo.countByStatus(SlideProcessingStatus.ProcessingStatus.PROCESSING);
+        long completed = processingStatusRepo.countByStatus(SlideProcessingStatus.ProcessingStatus.COMPLETED);
+        long failed = processingStatusRepo.countByStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
+        long total = pending + processing + completed + failed;
+        
+        double completionPercentage = total > 0 ? (completed * 100.0 / total) : 0;
+        
+        return SyncProgressStats.builder()
+            .totalSlides(total)
+            .pending(pending)
+            .processing(processing)
+            .completed(completed)
+            .failed(failed)
+            .completionPercentage(completionPercentage)
             .build();
     }
 }

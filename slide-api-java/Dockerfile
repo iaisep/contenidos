@@ -40,7 +40,7 @@ USER spring:spring
 EXPOSE 8080
 
 # Variables de entorno por defecto
-ENV JAVA_OPTS="-Xms256m -Xmx512m"
+ENV JAVA_OPTS="-Xms1g -Xmx4g"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \

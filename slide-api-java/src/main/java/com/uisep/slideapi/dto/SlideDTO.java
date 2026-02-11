@@ -168,4 +168,20 @@ public class SlideDTO {
         private Long totalProcessedSize;
         private List<MigrationResult> migrationResults;
     }
+    
+    /**
+     * DTO para estadísticas de progreso de sincronización.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SyncProgressStats {
+        private Long totalSlides;
+        private Long pending;
+        private Long processing;
+        private Long completed;
+        private Long failed;
+        private Double completionPercentage;
+    }
 }

@@ -57,6 +57,13 @@ public class AdminController {
         return ResponseEntity.ok(stats);
     }
     
+    @GetMapping("/sync/progress")
+    @Operation(summary = "Progreso de sincronización", 
+               description = "Obtiene estadísticas del progreso del tracking de sincronización")
+    public ResponseEntity<?> getSyncProgress() {
+        return ResponseEntity.ok(syncService.getSyncProgress());
+    }
+    
     @GetMapping("/health")
     @Operation(summary = "Health check", description = "Verifica el estado del servicio")
     public ResponseEntity<String> healthCheck() {
