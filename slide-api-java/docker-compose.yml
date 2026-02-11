@@ -1,0 +1,69 @@
+# ===============================================
+# Docker Compose para Slide API con Supabase
+# ===============================================
+# 
+# IMPORTANTE PARA COOLIFY:
+# La API se conecta al PostgreSQL de Supabase existente.
+# Contenedor: supabase-db-h4csg4oo4k08wc848008gcgw
+# Red Docker: h4csg4oo4k08wc848008gcgw
+#
+# En Coolify, asegúrate de que la API esté en la misma
+# red que Supabase o usa la IP interna.
+#
+# ===============================================
+
+version: '3.8'
+
+services:
+  # ===============================================
+  # API Java Spring Boot
+  # Conecta a Supabase PostgreSQL existente
+  # ===============================================
+  slide-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uisep-slide-api
+    restart: unless-stopped
+    environment:
+      # Conexión a réplica Odoo (SOLO LECTURA)
+      SPRING_DATASOURCE_REPLICA_URL: jdbc:postgresql://host.docker.internal:56432/UisepFinal
+      SPRING_DATASOURCE_REPLICA_USERNAME: odoo
+      REPLICA_DB_PASSWORD: ${REPLICA_DB_PASSWORD:-odoo}
+      
+      # Conexión a Supabase PostgreSQL (LECTURA/ESCRITURA)
+      # Schema: slide_api (separado de las tablas de Supabase)
+      SUPABASE_DB_HOST: ${SUPABASE_DB_HOST:-supabase-db-h4csg4oo4k08wc848008gcgw}
+      SUPABASE_DB_USER: ${SUPABASE_DB_USER:-postgres}
+      SUPABASE_DB_PASSWORD: ${SUPABASE_DB_PASSWORD:-1fqsZrj7ATbnjSjCKShU2h5A2wi0SIrl}
+      
+      # Configuración de Java
+      JAVA_OPTS: "-Xms256m -Xmx1g"
+      
+      # Perfil de Spring
+      SPRING_PROFILES_ACTIVE: production
+    ports:
+      - "8080:8080"
+    volumes:
+      - api-logs:/var/log/slide-api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/api/v1/admin/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - supabase-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  api-logs:
+    driver: local
+
+# ===============================================
+# Conectar a la red existente de Supabase
+# ===============================================
+networks:
+  supabase-network:
+    external: true
+    name: h4csg4oo4k08wc848008gcgw

@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# ===============================================
+# Maven Wrapper - Descarga automáticamente Maven
+# ===============================================
+
+set -euo pipefail
+
+# Configuración
+MAVEN_VERSION=3.9.6
+MAVEN_HOME="${HOME}/.m2/wrapper/dists/apache-maven-${MAVEN_VERSION}"
+
+# Crear directorio si no existe
+mkdir -p "${MAVEN_HOME}"
+
+# Descargar Maven si no existe
+if [ ! -f "${MAVEN_HOME}/bin/mvn" ]; then
+    echo "Descargando Maven ${MAVEN_VERSION}..."
+    curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+        | tar -xzf - -C "$(dirname ${MAVEN_HOME})"
+fi
+
+# Ejecutar Maven
+exec "${MAVEN_HOME}/bin/mvn" "$@"

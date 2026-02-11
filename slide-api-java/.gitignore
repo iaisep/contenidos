@@ -1,0 +1,44 @@
+# ===============================================
+# Archivos ignorados por Git
+# ===============================================
+
+# Maven
+target/
+*.jar
+*.war
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Compilados
+*.class
+*.jar
+*.war
+*.ear
+
+# Temporales
+*.tmp
+*.temp
+tmp/
+temp/
