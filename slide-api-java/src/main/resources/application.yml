@@ -1,6 +1,11 @@
 # ============================================
 # UISEP Slide API - Configuración Principal
 # ============================================
+# 
+# REDES DOCKER REQUERIDAS:
+# - h4csg4oo4k08wc848008gcgw (Supabase)
+# - i4s8o8000kc040cgwcwowwwc (Réplica PostgreSQL)
+# ============================================
 
 server:
   port: 8080
@@ -18,13 +23,15 @@ spring:
   
   # ============================================
   # DATASOURCE PRIMARIO: Réplica PostgreSQL (SOLO LECTURA)
-  # IP del servidor: 192.168.100.57
+  # Contenedor: postgres-replica-i4s8o8000kc040cgwcwowwwc
+  # Red Docker: i4s8o8000kc040cgwcwowwwc
+  # Puerto interno: 5432 (NO 56432, ese es el puerto expuesto al host)
   # ============================================
   datasource:
     replica:
-      url: jdbc:postgresql://${REPLICA_DB_HOST:192.168.100.57}:${REPLICA_DB_PORT:56432}/UisepFinal
+      url: jdbc:postgresql://${REPLICA_DB_HOST:postgres-replica-i4s8o8000kc040cgwcwowwwc}:${REPLICA_DB_PORT:5432}/UisepFinal
       username: odoo
-      password: ${REPLICA_DB_PASSWORD:odoo}  # Configurar en variables de entorno
+      password: ${REPLICA_DB_PASSWORD:odoo}
       driver-class-name: org.postgresql.Driver
       hikari:
         pool-name: ReplicaPool
@@ -39,10 +46,9 @@ spring:
     # DATASOURCE SECUNDARIO: Supabase PostgreSQL (LECTURA/ESCRITURA)
     # Contenedor: supabase-db-h4csg4oo4k08wc848008gcgw
     # Red Docker: h4csg4oo4k08wc848008gcgw
-    # IP interna: 10.0.10.5
     # ============================================
     processed:
-      url: jdbc:postgresql://${SUPABASE_DB_HOST:10.0.10.5}:5432/postgres?currentSchema=slide_api
+      url: jdbc:postgresql://${SUPABASE_DB_HOST:supabase-db-h4csg4oo4k08wc848008gcgw}:5432/postgres?currentSchema=slide_api
       username: ${SUPABASE_DB_USER:postgres}
       password: ${SUPABASE_DB_PASSWORD:1fqsZrj7ATbnjSjCKShU2h5A2wi0SIrl}
       driver-class-name: org.postgresql.Driver
