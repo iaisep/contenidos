@@ -1,6 +1,8 @@
 package com.uisep.slideapi.repository.replica;
 
 import com.uisep.slideapi.entity.replica.SlideSlideReplica;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -18,6 +20,13 @@ public interface SlideSlideReplicaRepository extends JpaRepository<SlideSlideRep
     
     // Slides activos
     List<SlideSlideReplica> findByActiveTrue();
+    
+    // Slides activos con paginación (IMPORTANTE para evitar OOM)
+    Page<SlideSlideReplica> findByActiveTrue(Pageable pageable);
+    
+    // Solo IDs de slides activos (ligero)
+    @Query("SELECT s.id FROM SlideSlideReplica s WHERE s.active = true ORDER BY s.id")
+    List<Integer> findActiveSlideIds();
     
     // Slides inactivos (candidatos a depuración)
     List<SlideSlideReplica> findByActiveFalse();

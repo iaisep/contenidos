@@ -20,6 +20,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.*;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+
 /**
  * Servicio principal para sincronizar datos desde la réplica y procesarlos.
  */
@@ -63,6 +68,7 @@ public class SlideSyncService {
     
     /**
      * Sincroniza todos los slides activos desde la réplica.
+     * Usa paginación para evitar OutOfMemoryError.
      * 
      * @param activeOnly Si true, solo procesa slides activos
      * @return Resultado de la sincronización
@@ -73,42 +79,63 @@ public class SlideSyncService {
         long startMs = System.currentTimeMillis();
         
         List<MigrationResult> migrationResults = new ArrayList<>();
-        int created = 0, updated = 0, failed = 0;
+        int created = 0, updated = 0, failed = 0, totalProcessed = 0;
         long totalOriginalSize = 0, totalProcessedSize = 0;
-        
-        // Obtener slides de la réplica
-        List<SlideSlideReplica> replicaSlides = activeOnly 
-            ? replicaSlideRepo.findByActiveTrue()
-            : replicaSlideRepo.findAll();
-        
-        log.info("Sincronizando {} slides desde la réplica...", replicaSlides.size());
         
         // Cargar canales para enriquecer nombres
         Map<Integer, String> channelNames = loadChannelNames();
         
-        for (SlideSlideReplica replica : replicaSlides) {
-            try {
-                MigrationResult result = processSlide(replica, channelNames);
-                migrationResults.add(result);
-                
-                if ("CREATED".equals(result.getStatus())) created++;
-                else if ("UPDATED".equals(result.getStatus())) updated++;
-                
-                totalOriginalSize += result.getOriginalSize() != null ? result.getOriginalSize() : 0;
-                totalProcessedSize += result.getNewSize() != null ? result.getNewSize() : 0;
-                
-            } catch (Exception e) {
-                log.error("Error procesando slide {}: {}", replica.getId(), e.getMessage());
-                failed++;
-                migrationResults.add(MigrationResult.builder()
-                    .slideId(replica.getId())
-                    .slideName(replica.getNameEs())
-                    .status("FAILED")
-                    .message(e.getMessage())
-                    .processedAt(LocalDateTime.now())
-                    .build());
+        // Usar paginación para evitar cargar todos los slides a memoria
+        int pageSize = batchSize > 0 ? batchSize : 10;
+        int pageNumber = 0;
+        Page<SlideSlideReplica> page;
+        
+        log.info("Iniciando sincronización con tamaño de lote: {}", pageSize);
+        
+        do {
+            Pageable pageable = PageRequest.of(pageNumber, pageSize, Sort.by("id"));
+            page = activeOnly 
+                ? replicaSlideRepo.findByActiveTrue(pageable)
+                : replicaSlideRepo.findAll(pageable);
+            
+            log.info("Procesando página {} de {} (slides {}-{})", 
+                pageNumber + 1, page.getTotalPages(), 
+                pageNumber * pageSize + 1, 
+                Math.min((pageNumber + 1) * pageSize, page.getTotalElements()));
+            
+            for (SlideSlideReplica replica : page.getContent()) {
+                try {
+                    MigrationResult result = processSlide(replica, channelNames);
+                    migrationResults.add(result);
+                    
+                    if ("CREATED".equals(result.getStatus())) created++;
+                    else if ("UPDATED".equals(result.getStatus())) updated++;
+                    
+                    totalOriginalSize += result.getOriginalSize() != null ? result.getOriginalSize() : 0;
+                    totalProcessedSize += result.getNewSize() != null ? result.getNewSize() : 0;
+                    
+                } catch (Exception e) {
+                    log.error("Error procesando slide {}: {}", replica.getId(), e.getMessage());
+                    failed++;
+                    migrationResults.add(MigrationResult.builder()
+                        .slideId(replica.getId())
+                        .slideName(replica.getNameEs())
+                        .status("FAILED")
+                        .message(e.getMessage())
+                        .processedAt(LocalDateTime.now())
+                        .build());
+                }
+                totalProcessed++;
             }
-        }
+            
+            pageNumber++;
+            
+            // Limitar resultados en memoria para evitar OOM
+            if (migrationResults.size() > 1000) {
+                migrationResults = migrationResults.subList(migrationResults.size() - 100, migrationResults.size());
+            }
+            
+        } while (page.hasNext());
         
         // Sincronizar canales
         int channelsProcessed = syncChannels();
@@ -119,7 +146,7 @@ public class SlideSyncService {
             .startedAt(startTime)
             .completedAt(LocalDateTime.now())
             .durationMs(duration)
-            .slidesProcessed(replicaSlides.size())
+            .slidesProcessed(totalProcessed)
             .slidesCreated(created)
             .slidesUpdated(updated)
             .slidesFailed(failed)
