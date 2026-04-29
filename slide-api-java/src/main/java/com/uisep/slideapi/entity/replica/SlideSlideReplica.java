@@ -135,6 +135,9 @@ public class SlideSlideReplica {
         }
         String html = getHtmlContentEs();
         if (html != null) return html;
+        // Fallback: use html_embed_code even if use_html_embed is false
+        String embed = getHtmlEmbedCodeEs();
+        if (embed != null) return embed;
         return preconverthtml;
     }
     
