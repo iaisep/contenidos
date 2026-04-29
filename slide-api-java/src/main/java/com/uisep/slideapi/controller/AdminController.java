@@ -1,6 +1,8 @@
 package com.uisep.slideapi.controller;
 
 import com.uisep.slideapi.dto.SlideDTO.*;
+import com.uisep.slideapi.entity.processed.SlideSyncLog;
+import com.uisep.slideapi.repository.processed.SlideSyncLogRepository;
 import com.uisep.slideapi.service.SlideSyncService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -8,6 +10,9 @@ import io.swagger.v3.oas.annotations.media.*;
 import io.swagger.v3.oas.annotations.responses.*;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import java.time.LocalDateTime;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +26,7 @@ import java.util.Map;
 public class AdminController {
 
     private final SlideSyncService syncService;
+    private final SlideSyncLogRepository syncLogRepo;
 
     @GetMapping("/health")
     @Operation(
@@ -208,5 +214,112 @@ public class AdminController {
         return ResponseEntity.ok(Map.of(
             "message", "Slides excluidos eliminados de la BD procesada",
             "deleted", deleted));
+    }
+
+    // ─── Sync Log ──────────────────────────────────────────────────────────────
+
+    @GetMapping("/sync/log")
+    @Operation(
+        summary = "Log de sincronizaciones",
+        description = """
+            Historial de slides creados o actualizados durante sincronizaciones.
+
+            Solo se registran acciones `CREATED`, `UPDATED` y `FAILED` — los slides
+            sin cambios (`SKIPPED`) no generan entrada en el log.
+
+            **Filtros disponibles:**
+            - `action` — `CREATED`, `UPDATED` o `FAILED`
+            - `slideId` — historial de un slide concreto
+            - `syncRunId` — todos los eventos de una ejecución específica
+            - `from` / `to` — rango de fechas (ISO-8601: `2026-04-01T00:00:00`)
+            """)
+    @ApiResponse(responseCode = "200", description = "Página de entradas de log")
+    public ResponseEntity<Page<SyncLogEntry>> getSyncLog(
+            @Parameter(description = "Filtrar por acción", example = "UPDATED")
+            @RequestParam(required = false) String action,
+            @Parameter(description = "Filtrar por ID de slide", example = "1234")
+            @RequestParam(required = false) Integer slideId,
+            @Parameter(description = "Filtrar por ID de ejecución de sync")
+            @RequestParam(required = false) String syncRunId,
+            @Parameter(description = "Desde (ISO-8601)", example = "2026-04-01T00:00:00")
+            @RequestParam(required = false) String from,
+            @Parameter(description = "Hasta (ISO-8601)", example = "2026-04-30T23:59:59")
+            @RequestParam(required = false) String to,
+            @Parameter(description = "Página (empieza en 0)", example = "0")
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Registros por página (máx 200)", example = "50")
+            @RequestParam(defaultValue = "50") int size) {
+
+        size = Math.min(size, 200);
+        var pageable = PageRequest.of(page, size);
+
+        Page<SlideSyncLog> raw;
+
+        if (slideId != null) {
+            raw = syncLogRepo.findBySlideIdOrderBySyncedAtDesc(slideId, pageable);
+        } else if (syncRunId != null) {
+            raw = syncLogRepo.findBySyncRunIdOrderBySyncedAtDesc(syncRunId, pageable);
+        } else if (from != null || to != null) {
+            LocalDateTime dtFrom = from != null ? LocalDateTime.parse(from) : LocalDateTime.of(2000, 1, 1, 0, 0);
+            LocalDateTime dtTo   = to   != null ? LocalDateTime.parse(to)   : LocalDateTime.now().plusYears(1);
+            raw = syncLogRepo.findBySyncedAtBetweenOrderBySyncedAtDesc(dtFrom, dtTo, pageable);
+        } else if (action != null) {
+            raw = syncLogRepo.findByActionOrderBySyncedAtDesc(
+                SlideSyncLog.SyncAction.valueOf(action.toUpperCase()), pageable);
+        } else {
+            raw = syncLogRepo.findByOrderBySyncedAtDesc(pageable);
+        }
+
+        Page<SyncLogEntry> result = raw.map(e -> SyncLogEntry.builder()
+            .id(e.getId())
+            .syncRunId(e.getSyncRunId())
+            .syncedAt(e.getSyncedAt())
+            .slideId(e.getSlideId())
+            .slideName(e.getSlideName())
+            .action(e.getAction().name())
+            .slideType(e.getSlideType())
+            .channelId(e.getChannelId())
+            .channelName(e.getChannelName())
+            .odooWriteDate(e.getOdooWriteDate())
+            .originalSizeBytes(e.getOriginalSizeBytes())
+            .processedSizeBytes(e.getProcessedSizeBytes())
+            .imagesExtracted(e.getImagesExtracted())
+            .message(e.getMessage())
+            .build());
+
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/sync/log/runs")
+    @Operation(
+        summary = "Resumen de ejecuciones de sync",
+        description = """
+            Lista de ejecuciones de sincronización, ordenadas por la más reciente.
+
+            Cada entrada representa un `syncRunId` único con métricas agregadas:
+            slides creados, actualizados y fallidos.
+
+            Para ver los slides de una ejecución específica usar `GET /admin/sync/log?syncRunId={id}`.
+            """)
+    @ApiResponse(responseCode = "200", description = "Lista de ejecuciones de sync")
+    public ResponseEntity<List<SyncRunSummary>> getSyncRuns(
+            @Parameter(description = "Número de ejecuciones a devolver (máx 100)", example = "20")
+            @RequestParam(defaultValue = "20") int limit) {
+
+        limit = Math.min(limit, 100);
+        List<Object[]> rows = syncLogRepo.findSyncRunSummaries(limit);
+
+        List<SyncRunSummary> summaries = rows.stream().map(r -> SyncRunSummary.builder()
+            .syncRunId((String) r[0])
+            .startedAt(r[1] instanceof java.sql.Timestamp ts ? ts.toLocalDateTime() : (LocalDateTime) r[1])
+            .lastEventAt(r[2] instanceof java.sql.Timestamp ts ? ts.toLocalDateTime() : (LocalDateTime) r[2])
+            .totalEvents(((Number) r[3]).longValue())
+            .created(((Number) r[4]).longValue())
+            .updated(((Number) r[5]).longValue())
+            .failed(((Number) r[6]).longValue())
+            .build())
+            .toList();
+
+        return ResponseEntity.ok(summaries);
     }
 }

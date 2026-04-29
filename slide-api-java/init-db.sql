@@ -62,3 +62,29 @@ SELECT
     (SELECT SUM(images_extracted) FROM slide_api.slides s WHERE s.channel_id = c.id) as total_images_extracted
 FROM slide_api.channels c
 ORDER BY c.total_size_bytes DESC;
+
+-- ===============================================
+-- Tabla de log de sincronizaciones (v1.3.0)
+-- Registra slides creados, actualizados o fallidos en cada sync run
+-- ===============================================
+CREATE TABLE IF NOT EXISTS slide_api.slide_sync_log (
+    id                   BIGSERIAL    PRIMARY KEY,
+    sync_run_id          VARCHAR(36)  NOT NULL,
+    synced_at            TIMESTAMP    NOT NULL,
+    slide_id             INTEGER      NOT NULL,
+    slide_name           VARCHAR(500),
+    action               VARCHAR(20)  NOT NULL,  -- CREATED | UPDATED | FAILED
+    slide_type           VARCHAR(50),
+    channel_id           INTEGER,
+    channel_name         VARCHAR(255),
+    odoo_write_date      TIMESTAMP,
+    original_size_bytes  BIGINT,
+    processed_size_bytes BIGINT,
+    images_extracted     INTEGER,
+    message              VARCHAR(500)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_log_run_id    ON slide_api.slide_sync_log(sync_run_id);
+CREATE INDEX IF NOT EXISTS idx_sync_log_slide_id  ON slide_api.slide_sync_log(slide_id);
+CREATE INDEX IF NOT EXISTS idx_sync_log_synced_at ON slide_api.slide_sync_log(synced_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_log_action    ON slide_api.slide_sync_log(action);

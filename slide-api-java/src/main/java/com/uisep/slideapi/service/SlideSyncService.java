@@ -6,9 +6,11 @@ import com.uisep.slideapi.entity.processed.ProcessedSlide;
 import com.uisep.slideapi.entity.processed.SlideProcessingStatus;
 import com.uisep.slideapi.entity.replica.SlideChannelReplica;
 import com.uisep.slideapi.entity.replica.SlideSlideReplica;
+import com.uisep.slideapi.entity.processed.SlideSyncLog;
 import com.uisep.slideapi.repository.processed.ProcessedChannelRepository;
 import com.uisep.slideapi.repository.processed.ProcessedSlideRepository;
 import com.uisep.slideapi.repository.processed.SlideImageRepository;
+import com.uisep.slideapi.repository.processed.SlideSyncLogRepository;
 import com.uisep.slideapi.repository.processed.SlideProcessingStatusRepository;
 import com.uisep.slideapi.repository.replica.SlideChannelReplicaRepository;
 import com.uisep.slideapi.repository.replica.SlideSlideReplicaRepository;
@@ -41,6 +43,7 @@ public class SlideSyncService {
     private final SlideProcessingStatusRepository processingStatusRepo;
     private final Base64ImageExtractor imageExtractor;
     private final OdooFileService odooFileService;
+    private final SlideSyncLogRepository syncLogRepo;
     
     @Value("${migration.base64.batch-size:10}")
     private int batchSize;
@@ -103,6 +106,7 @@ public class SlideSyncService {
      * @return Resultado de la sincronización
      */
     public SyncResult syncAllSlides(boolean activeOnly) {
+        String syncRunId = java.util.UUID.randomUUID().toString();
         LocalDateTime startTime = LocalDateTime.now();
         long startMs = System.currentTimeMillis();
         
@@ -139,7 +143,7 @@ public class SlideSyncService {
         for (Integer slideId : slideIds) {
             try {
                 // Procesar en transacción individual
-                MigrationResult result = processSingleSlideWithTracking(slideId, channelNames);
+                MigrationResult result = processSingleSlideWithTracking(slideId, channelNames, syncRunId);
                 
                 migrationResults.add(result);
                 
@@ -207,7 +211,7 @@ public class SlideSyncService {
      * REQUIRES_NEW fuerza nueva transacción incluso si se llama desde mismo bean.
      */
     @Transactional(transactionManager = "processedTransactionManager", propagation = Propagation.REQUIRES_NEW)
-    public MigrationResult processSingleSlideWithTracking(Integer slideId, Map<Integer, String> channelNames) {
+    public MigrationResult processSingleSlideWithTracking(Integer slideId, Map<Integer, String> channelNames, String syncRunId) {
         SlideProcessingStatus trackingStatus = processingStatusRepo.findById(slideId)
             .orElse(SlideProcessingStatus.builder()
                 .slideId(slideId)
@@ -242,6 +246,11 @@ public class SlideSyncService {
             // Procesar slide
             MigrationResult result = processSlide(replica, channelNames);
             
+            // Guardar en log de sincronización (CREATED / UPDATED solamente)
+            if (!"SKIPPED".equals(result.getStatus())) {
+                saveSyncLogEntry(syncRunId, replica, result, channelNames);
+            }
+
             // Actualizar tracking como completado
             trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.COMPLETED);
             trackingStatus.setCompletedAt(LocalDateTime.now());
@@ -255,6 +264,7 @@ public class SlideSyncService {
         } catch (OutOfMemoryError e) {
             // Error de memoria
             System.err.println("[OOM] Slide " + slideId + ": contenido demasiado grande para heap");
+            saveSyncLogEntryFailed(syncRunId, slideId, "OOM - slide muy grande");
             
             trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
             trackingStatus.setFailedAt(LocalDateTime.now());
@@ -275,6 +285,7 @@ public class SlideSyncService {
                 
         } catch (Exception e) {
             log.error("Error procesando slide {}: {}", slideId, e.getMessage(), e);
+            saveSyncLogEntryFailed(syncRunId, slideId, e.getMessage());
             
             // Marcar como fallido
             trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
@@ -494,9 +505,14 @@ public class SlideSyncService {
     public MigrationResult syncSlideById(Integer slideId) {
         SlideSlideReplica replica = replicaSlideRepo.findById(slideId)
             .orElseThrow(() -> new RuntimeException("Slide no encontrado: " + slideId));
-        
+
         Map<Integer, String> channelNames = loadChannelNames();
-        return processSlide(replica, channelNames);
+        MigrationResult result = processSlide(replica, channelNames);
+        if (!"SKIPPED".equals(result.getStatus())) {
+            saveSyncLogEntry("manual-" + java.util.UUID.randomUUID().toString().substring(0, 8),
+                             replica, result, channelNames);
+        }
+        return result;
     }
     
     /**
@@ -570,6 +586,52 @@ public class SlideSyncService {
             .build();
     }
     
+
+    private void saveSyncLogEntry(String syncRunId, SlideSlideReplica replica,
+                                   MigrationResult result, Map<Integer, String> channelNames) {
+        try {
+            SlideSyncLog.SyncAction action = switch (result.getStatus()) {
+                case "CREATED" -> SlideSyncLog.SyncAction.CREATED;
+                case "UPDATED" -> SlideSyncLog.SyncAction.UPDATED;
+                default        -> SlideSyncLog.SyncAction.FAILED;
+            };
+            SlideSyncLog entry = SlideSyncLog.builder()
+                .syncRunId(syncRunId)
+                .syncedAt(LocalDateTime.now())
+                .slideId(replica.getId())
+                .slideName(result.getSlideName())
+                .action(action)
+                .slideType(replica.getSlideType())
+                .channelId(replica.getChannelId())
+                .channelName(channelNames.get(replica.getChannelId()))
+                .odooWriteDate(replica.getWriteDate())
+                .originalSizeBytes(result.getOriginalSize())
+                .processedSizeBytes(result.getNewSize())
+                .imagesExtracted(result.getImagesExtracted())
+                .message(result.getMessage())
+                .build();
+            syncLogRepo.save(entry);
+        } catch (Exception e) {
+            log.warn("No se pudo guardar entrada de sync log para slide {}: {}", replica.getId(), e.getMessage());
+        }
+    }
+
+    private void saveSyncLogEntryFailed(String syncRunId, Integer slideId, String errorMsg) {
+        try {
+            SlideSyncLog entry = SlideSyncLog.builder()
+                .syncRunId(syncRunId)
+                .syncedAt(LocalDateTime.now())
+                .slideId(slideId)
+                .slideName("Unknown")
+                .action(SlideSyncLog.SyncAction.FAILED)
+                .message(errorMsg != null ? errorMsg.substring(0, Math.min(499, errorMsg.length())) : "Error")
+                .build();
+            syncLogRepo.save(entry);
+        } catch (Exception ex) {
+            log.warn("No se pudo guardar entrada de sync log (FAILED) para slide {}", slideId);
+        }
+    }
+
     /**
      * Resetea slides que quedaron atascados en estado PROCESSING.
      */
