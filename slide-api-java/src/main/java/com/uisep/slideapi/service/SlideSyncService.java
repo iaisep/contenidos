@@ -12,6 +12,7 @@ import com.uisep.slideapi.repository.processed.SlideImageRepository;
 import com.uisep.slideapi.repository.processed.SlideProcessingStatusRepository;
 import com.uisep.slideapi.repository.replica.SlideChannelReplicaRepository;
 import com.uisep.slideapi.repository.replica.SlideSlideReplicaRepository;
+import com.uisep.slideapi.service.OdooFileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -38,6 +40,7 @@ public class SlideSyncService {
     private final SlideImageRepository imageRepo;
     private final SlideProcessingStatusRepository processingStatusRepo;
     private final Base64ImageExtractor imageExtractor;
+    private final OdooFileService odooFileService;
     
     @Value("${migration.base64.batch-size:10}")
     private int batchSize;
@@ -110,10 +113,16 @@ public class SlideSyncService {
         // Cargar canales para enriquecer nombres
         Map<Integer, String> channelNames = loadChannelNames();
         
-        // 1. Inicializar tracking si es necesario
+        // 1. Resetear slides que cambiaron en Odoo desde la última sincronización
+        int outdatedReset = resetOutdatedSlides();
+        if (outdatedReset > 0) {
+            log.info("Detectados {} slides modificados en Odoo → reseteados a PENDING", outdatedReset);
+        }
+
+        // 2. Inicializar tracking si es necesario
         initializeTracking();
         
-        // 2. Resetear slides que quedaron en PROCESSING (por interrupciones previas)
+        // 3. Resetear slides que quedaron en PROCESSING (por interrupciones previas)
         List<SlideProcessingStatus> stuckInProcessing = processingStatusRepo.findByStatus(
             SlideProcessingStatus.ProcessingStatus.PROCESSING);
         for (SlideProcessingStatus stuck : stuckInProcessing) {
@@ -121,7 +130,7 @@ public class SlideSyncService {
             processingStatusRepo.save(stuck);
         }
         
-        // 3. Obtener slides pendientes o fallidos
+        // 4. Obtener slides pendientes o fallidos
         List<Integer> slideIds = processingStatusRepo.findPendingSlideIds();
         int totalSlides = slideIds.size();
         
@@ -243,27 +252,9 @@ public class SlideSyncService {
             
             return result;
             
-        } catch (com.fasterxml.jackson.core.exc.StreamConstraintsException e) {
-            // Error específico: contenido muy grande
-            log.error("Slide {}: Contenido excede límite Jackson (>20MB): {}", slideId, e.getMessage());
-            
-            trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
-            trackingStatus.setFailedAt(LocalDateTime.now());
-            trackingStatus.setErrorMessage("Contenido > 20MB - Jackson limit");
-            trackingStatus.setRetryCount(trackingStatus.getRetryCount() + 1);
-            processingStatusRepo.saveAndFlush(trackingStatus);
-            
-            return MigrationResult.builder()
-                .slideId(slideId)
-                .slideName("Unknown")
-                .status("FAILED")
-                .message("Contenido HTML > 20MB")
-                .processedAt(LocalDateTime.now())
-                .build();
-                
         } catch (OutOfMemoryError e) {
             // Error de memoria
-            log.error("Slide {}: OutOfMemoryError - slide demasiado grande", slideId);
+            System.err.println("[OOM] Slide " + slideId + ": contenido demasiado grande para heap");
             
             trackingStatus.setStatus(SlideProcessingStatus.ProcessingStatus.FAILED);
             trackingStatus.setFailedAt(LocalDateTime.now());
@@ -308,15 +299,49 @@ public class SlideSyncService {
      */
     private MigrationResult processSlide(SlideSlideReplica replica, Map<Integer, String> channelNames) {
         String slideName = replica.getNameEs();
-        String htmlContent = replica.getHtmlContentEs();
+        String slideType = replica.getSlideType();
+        
+        // Resolver htmlContent y contentUrl según tipo de slide
+        // Para artículos: use_html_embed=true → html_embed_code tiene precedencia sobre html_content
+        String htmlContent = "article".equals(slideType) || "certification".equals(slideType)
+            ? replica.resolveHtmlContent()
+            : null;
+        String contentUrl = resolveContentUrl(replica);
+        String youtubeId = resolveYoutubeId(replica);
+
+        // Descargar archivo local para slides tipo PDF/presentation/infographic/webpage
+        // Evita depender de credenciales Odoo en la app móvil
+        boolean isFileType = "pdf".equals(slideType) || "presentation".equals(slideType)
+            || "infographic".equals(slideType) || "webpage".equals(slideType);
+        boolean fileDownloaded = false;
+
+        if (isFileType) {
+            // Always use local API URL — FileController downloads on first request
+            contentUrl = "https://slides.universidadisep.com/api/v1/files/" + replica.getId();
+            // Pre-download if attachment exists in Odoo
+            if (odooFileService.hasRemoteFile(replica.getId())) {
+                Optional<Path> localFile = odooFileService.downloadAndSave(replica.getId());
+                fileDownloaded = localFile.isPresent();
+            }
+        }
+
+        
         long originalSize = htmlContent != null ? htmlContent.length() : 0;
         
         // Verificar si ya existe y si necesita actualización
         Optional<ProcessedSlide> existing = processedSlideRepo.findById(replica.getId());
         boolean isNew = existing.isEmpty();
-        boolean needsUpdate = !isNew && replica.getWriteDate() != null && 
-            (existing.get().getOdooWriteDate() == null || 
-             replica.getWriteDate().isAfter(existing.get().getOdooWriteDate()));
+        // Also update if file was just downloaded but Supabase still has the old URL
+        // Or if slide has remote file but not yet downloaded locally
+        boolean needsFileUrlUpdate = isFileType && !isNew && (
+            (fileDownloaded && existing.get().getContentUrl() != null 
+             && existing.get().getContentUrl().contains("app.universidadisep.com"))
+            || (!fileDownloaded && !odooFileService.exists(replica.getId()) 
+                && odooFileService.hasRemoteFile(replica.getId()))
+        );
+        boolean needsUpdate = needsFileUrlUpdate || (!isNew && replica.getWriteDate() != null &&
+            (existing.get().getOdooWriteDate() == null ||
+             replica.getWriteDate().isAfter(existing.get().getOdooWriteDate())));
         
         if (!isNew && !needsUpdate) {
             return MigrationResult.builder()
@@ -343,12 +368,20 @@ public class SlideSyncService {
         
         // Crear o actualizar el slide procesado
         ProcessedSlide processed = existing.orElse(new ProcessedSlide());
+        boolean hasContent = processedHtml != null && !processedHtml.isEmpty();
+        boolean hasUrl = contentUrl != null && !contentUrl.isEmpty();
+        String status = imagesExtracted > 0 ? "COMPLETED"
+            : (hasContent || hasUrl) ? "NO_MIGRATION_NEEDED"
+            : "PENDING";
+        
         processed.setId(replica.getId());
         processed.setChannelId(replica.getChannelId());
         processed.setChannelName(channelNames.get(replica.getChannelId()));
         processed.setName(slideName);
         processed.setSlideType(replica.getSlideType());
         processed.setHtmlContent(processedHtml);
+        processed.setContentUrl(contentUrl);
+        processed.setYoutubeId(youtubeId);
         processed.setDescription(replica.getDescription());
         processed.setActive(replica.getActive());
         processed.setIsPublished(replica.getIsPublished());
@@ -359,7 +392,8 @@ public class SlideSyncService {
         processed.setHasBase64Original(replica.hasBase64Images());
         processed.setOdooCreateDate(replica.getCreateDate());
         processed.setOdooWriteDate(replica.getWriteDate());
-        processed.setMigrationStatus(imagesExtracted > 0 ? "COMPLETED" : "NO_MIGRATION_NEEDED");
+        processed.setMigrationStatus(status);
+        processed.setFileDownloaded(fileDownloaded);
         
         processedSlideRepo.save(processed);
         
@@ -374,6 +408,38 @@ public class SlideSyncService {
             .message(isNew ? "Slide creado" : "Slide actualizado")
             .processedAt(LocalDateTime.now())
             .build();
+    }
+    
+
+    /**
+     * Resuelve la URL del contenido según el tipo de slide.
+     * Los slides tipo article tienen su contenido en htmlContent.
+     * Los demás tipos exponen una URL a su recurso multimedia.
+     */
+    private String resolveContentUrl(SlideSlideReplica replica) {
+        String type = replica.getSlideType();
+        if (type == null) return null;
+        return switch (type) {
+            case "video"          -> replica.getBunnyUrl();
+            case "youtube_video"  -> replica.getUrl();
+            case "local_external" -> replica.getExternalUrl();
+            case "pdf", "presentation", "infographic", "webpage" -> null;
+            default -> null;
+        };
+    }
+    
+    /**
+     * Extrae el ID de YouTube de la URL del slide.
+     */
+    private String resolveYoutubeId(SlideSlideReplica replica) {
+        if (!"youtube_video".equals(replica.getSlideType())) return null;
+        String url = replica.getUrl();
+        if (url == null) return null;
+        // Formatos: watch?v=ID, youtu.be/ID, embed/ID
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("(?:v=|youtu[.]be/|embed/)([A-Za-z0-9_-]{11})")
+            .matcher(url);
+        return m.find() ? m.group(1) : null;
     }
     
     /**
@@ -396,12 +462,9 @@ public class SlideSyncService {
                 channel.setOdooCreateDate(replica.getCreateDate());
                 channel.setOdooWriteDate(replica.getWriteDate());
                 
-                // Calcular estadísticas de slides
-                List<ProcessedSlide> channelSlides = processedSlideRepo.findByChannelId(replica.getId());
-                channel.setSlideCount(channelSlides.size());
-                channel.setTotalSizeBytes(channelSlides.stream()
-                    .mapToLong(s -> s.getProcessedSizeBytes() != null ? s.getProcessedSizeBytes() : 0)
-                    .sum());
+                // Calcular estadísticas de slides (aggregate, sin cargar entidades)
+                channel.setSlideCount((int) processedSlideRepo.countByChannelId(replica.getId()));
+                channel.setTotalSizeBytes(processedSlideRepo.sumProcessedSizeByChannelId(replica.getId()));
                 
                 processedChannelRepo.save(channel);
                 processed++;
@@ -458,34 +521,34 @@ public class SlideSyncService {
      * Obtiene estadísticas de depuración.
      */
     public DepurationStats getDepurationStats() {
-        // Estadísticas de la réplica
+        // Estadísticas de la réplica (aggregate queries, sin cargar entidades)
         long totalSlides = replicaSlideRepo.count();
-        long activeSlides = replicaSlideRepo.findByActiveTrue().size();
-        long inactiveSlides = totalSlides - activeSlides;
+        long activeSlides = replicaSlideRepo.countByActiveTrue();
+        long inactiveSlides = replicaSlideRepo.countByActiveFalse();
         
-        Object[] base64Stats = replicaSlideRepo.getBase64Statistics();
-        long slidesWithBase64 = base64Stats[0] != null ? ((Number) base64Stats[0]).longValue() : 0;
-        long base64Size = base64Stats[1] != null ? ((Number) base64Stats[1]).longValue() : 0;
+        // Base64 scan omitido del stats (LIKE sobre TEXT column de 37k filas es muy lento)
+        long slidesWithBase64 = -1L;
+        long base64Size = -1L;
         
-        // Estadísticas de procesados
-        Object[] migrationStats = processedSlideRepo.getMigrationStatistics();
-        long totalOriginalSize = migrationStats[1] != null ? ((Number) migrationStats[1]).longValue() : 0;
-        long totalProcessedSize = migrationStats[2] != null ? ((Number) migrationStats[2]).longValue() : 0;
-        long totalImagesExtracted = migrationStats[3] != null ? ((Number) migrationStats[3]).longValue() : 0;
+        // Estadísticas de procesados (consultas individuales, evitar Object[] multi-columna)
+        Long totalOriginalSizeL = processedSlideRepo.sumOriginalSizeCompleted();
+        Long totalProcessedSizeL = processedSlideRepo.sumProcessedSizeCompleted();
+        Long totalImagesExtractedL = processedSlideRepo.sumImagesExtractedCompleted();
+        long totalOriginalSize = totalOriginalSizeL != null ? totalOriginalSizeL : 0L;
+        long totalProcessedSize = totalProcessedSizeL != null ? totalProcessedSizeL : 0L;
+        long totalImagesExtracted = totalImagesExtractedL != null ? totalImagesExtractedL : 0L;
         
         long savedBytes = totalOriginalSize - totalProcessedSize;
         double savingsPercentage = totalOriginalSize > 0 
             ? (savedBytes * 100.0 / totalOriginalSize) 
             : 0;
         
-        // Acciones pendientes
-        List<SlideSlideReplica> inactiveList = replicaSlideRepo.findByActiveFalse();
-        long inactiveSize = inactiveList.stream()
-            .mapToLong(SlideSlideReplica::getHtmlContentSizeBytes)
-            .sum();
-        
+        // Acciones pendientes (aggregate queries, sin cargar entidades)
+        long inactiveCount = replicaSlideRepo.countByActiveFalse();
+        long inactiveSize = replicaSlideRepo.sumHtmlContentSizeInactive();
+
         PendingActions pending = PendingActions.builder()
-            .inactiveSlidesToDelete((long) inactiveList.size())
+            .inactiveSlidesToDelete(inactiveCount)
             .inactiveSlidesSize(inactiveSize)
             .slidesToMigrateBase64(slidesWithBase64)
             .base64Size(base64Size)
@@ -544,5 +607,84 @@ public class SlideSyncService {
             .failed(failed)
             .completionPercentage(completionPercentage)
             .build();
+    }
+
+
+    /**
+     * Detecta slides COMPLETED cuyo write_date en la réplica supera el odoo_write_date guardado
+     * y los resetea a PENDING para que syncAllSlides los vuelva a procesar.
+     */
+    @Transactional("processedTransactionManager")
+    public int resetOutdatedSlides() {
+        List<Integer> completedIds = processingStatusRepo.findCompletedSlideIds();
+        if (completedIds.isEmpty()) return 0;
+
+        List<Integer> outdatedIds = new ArrayList<>();
+        int chunkSize = 500;
+
+        for (int i = 0; i < completedIds.size(); i += chunkSize) {
+            List<Integer> chunk = completedIds.subList(i, Math.min(i + chunkSize, completedIds.size()));
+
+            // Fechas en BD procesada
+            Map<Integer, java.time.LocalDateTime> processedDates = new HashMap<>();
+            for (Object[] row : processedSlideRepo.findWriteDatesByIds(chunk)) {
+                processedDates.put(((Number) row[0]).intValue(), (java.time.LocalDateTime) row[1]);
+            }
+
+            // Fechas en réplica (nativeQuery devuelve Timestamp)
+            Map<Integer, java.time.LocalDateTime> replicaDates = new HashMap<>();
+            for (Object[] row : replicaSlideRepo.findWriteDatesByIds(chunk)) {
+                Integer id = ((Number) row[0]).intValue();
+                java.time.LocalDateTime wd = null;
+                if (row[1] instanceof java.sql.Timestamp ts) {
+                    wd = ts.toLocalDateTime();
+                } else if (row[1] instanceof java.time.LocalDateTime ldt) {
+                    wd = ldt;
+                }
+                if (wd != null) replicaDates.put(id, wd);
+            }
+
+            for (Integer id : chunk) {
+                java.time.LocalDateTime processed = processedDates.get(id);
+                java.time.LocalDateTime replica = replicaDates.get(id);
+                if (replica != null && (processed == null || replica.isAfter(processed))) {
+                    outdatedIds.add(id);
+                }
+            }
+        }
+
+        if (!outdatedIds.isEmpty()) {
+            for (int i = 0; i < outdatedIds.size(); i += chunkSize) {
+                List<Integer> chunk = outdatedIds.subList(i, Math.min(i + chunkSize, outdatedIds.size()));
+                processingStatusRepo.updateStatusByIds(
+                    SlideProcessingStatus.ProcessingStatus.PENDING, chunk);
+            }
+            log.info("resetOutdatedSlides: {} slides reseteados a PENDING por cambios en Odoo", outdatedIds.size());
+        }
+
+        return outdatedIds.size();
+    }
+
+    /**
+     * Elimina de la BD procesada los slides que ya no están en el conjunto relevante
+     * (activos, publicados, en canal publicado). Usa IDs para evitar cargar htmlContent.
+     */
+    @Transactional("processedTransactionManager")
+    public int purgeExcludedSlides() {
+        List<Integer> relevantIds = replicaSlideRepo.findActiveSlideIds();
+        Set<Integer> relevantSet = new HashSet<>(relevantIds);
+
+        List<Integer> processedIds = processedSlideRepo.findAllIds();
+        int deleted = 0;
+        for (Integer id : processedIds) {
+            if (!relevantSet.contains(id)) {
+                imageRepo.deleteBySlideId(id);
+                processedSlideRepo.deleteById(id);
+                processingStatusRepo.deleteById(id);
+                deleted++;
+            }
+        }
+        log.info("purgeExcludedSlides: {} slides eliminados de la BD procesada", deleted);
+        return deleted;
     }
 }

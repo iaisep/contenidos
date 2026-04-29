@@ -41,6 +41,13 @@ public class ProcessedSlide {
     @Column(name = "html_content", columnDefinition = "text")
     private String htmlContent;  // HTML limpio (sin Base64)
     
+
+    @Column(name = "content_url", columnDefinition = "text")
+    private String contentUrl;
+    
+    @Column(name = "youtube_id", length = 50)
+    private String youtubeId;
+    
     @Column(name = "description", columnDefinition = "text")
     private String description;
     
@@ -83,6 +90,9 @@ public class ProcessedSlide {
     @Column(name = "migration_status", length = 50)
     private String migrationStatus;  // PENDING, PROCESSING, COMPLETED, FAILED
     
+    @Column(name = "file_downloaded")
+    private Boolean fileDownloaded;
+
     @Column(name = "migration_notes", columnDefinition = "text")
     private String migrationNotes;
     

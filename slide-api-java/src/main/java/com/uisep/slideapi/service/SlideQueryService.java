@@ -10,6 +10,9 @@ import com.uisep.slideapi.repository.processed.SlideImageRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -46,6 +49,14 @@ public class SlideQueryService {
             .collect(Collectors.toList());
     }
     
+    /**
+     * Lista todos los slides activos y publicados, con paginación.
+     */
+    public Page<SlideListItem> getPublishedSlidesPaged(Pageable pageable) {
+        return slideRepo.findByActiveTrueAndIsPublishedTrue(pageable)
+            .map(this::toListItem);
+    }
+
     /**
      * Lista slides por canal.
      */
@@ -120,6 +131,8 @@ public class SlideQueryService {
             .name(slide.getName())
             .slideType(slide.getSlideType())
             .htmlContent(slide.getHtmlContent())
+            .contentUrl(slide.getContentUrl())
+            .youtubeId(slide.getYoutubeId())
             .description(slide.getDescription())
             .active(slide.getActive())
             .isPublished(slide.getIsPublished())
@@ -147,6 +160,8 @@ public class SlideQueryService {
             .originalSizeBytes(slide.getOriginalSizeBytes())
             .processedSizeBytes(slide.getProcessedSizeBytes())
             .migrationStatus(slide.getMigrationStatus())
+            .contentUrl(slide.getContentUrl())
+            .youtubeId(slide.getYoutubeId())
             .build();
     }
     

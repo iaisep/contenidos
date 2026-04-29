@@ -122,3 +122,16 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
     enabled: true
+
+# ============================================
+# API AUTHENTICATION
+# ============================================
+api:
+  keys: "uisep-mobile-2026-k1x9p2m7n4,uisep-internal-2026-j8w3q5v6r"
+
+# ============================================
+# FILE STORAGE (PDFs descargados de Odoo)
+# ============================================
+storage:
+  files:
+    path: /files

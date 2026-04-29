@@ -55,4 +55,7 @@ public interface SlideImageRepository extends JpaRepository<SlideImage, Long> {
         GROUP BY i.mimeType
         """)
     List<Object[]> countByMimeType();
+
+    // Eliminar imágenes de un slide (para purge)
+    void deleteBySlideId(Integer slideId);
 }

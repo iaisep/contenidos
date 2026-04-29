@@ -38,6 +38,13 @@ public class SlideSlideReplica {
     @Column(name = "html_content", columnDefinition = "jsonb")
     private Map<String, String> htmlContent;
     
+    @Type(JsonType.class)
+    @Column(name = "html_embed_code", columnDefinition = "jsonb")
+    private Map<String, String> htmlEmbedCode;
+    
+    @Column(name = "use_html_embed")
+    private Boolean useHtmlEmbed;
+    
     @Column(name = "active")
     private Boolean active;
     
@@ -59,12 +66,19 @@ public class SlideSlideReplica {
     @Column(name = "preconvertdes", columnDefinition = "text")
     private String preconvertdes;
     
+
+    @Column(name = "bunny_url", columnDefinition = "text")
+    private String bunnyUrl;
+    
+    @Column(name = "url", columnDefinition = "text")
+    private String url;
+    
+    @Column(name = "external_url", columnDefinition = "text")
+    private String externalUrl;
+    
     @Column(name = "description", columnDefinition = "text")
     private String description;
     
-    @Type(JsonType.class)
-    @Column(name = "html_embed_code", columnDefinition = "jsonb")
-    private Map<String, String> htmlEmbedCode;
     
     @Column(name = "create_date")
     private LocalDateTime createDate;
@@ -98,6 +112,30 @@ public class SlideSlideReplica {
                htmlContent.getOrDefault("es_ES",
                htmlContent.getOrDefault("en_US",
                htmlContent.values().stream().findFirst().orElse(null))));
+    }
+    
+    /**
+     * Obtiene el embed HTML en español o el primer idioma disponible.
+     */
+    public String getHtmlEmbedCodeEs() {
+        if (htmlEmbedCode == null) return null;
+        return htmlEmbedCode.getOrDefault("es_MX",
+               htmlEmbedCode.getOrDefault("es_ES",
+               htmlEmbedCode.getOrDefault("en_US",
+               htmlEmbedCode.values().stream().findFirst().orElse(null))));
+    }
+    
+    /**
+     * Resuelve el contenido HTML efectivo según use_html_embed.
+     */
+    public String resolveHtmlContent() {
+        if (Boolean.TRUE.equals(useHtmlEmbed)) {
+            String embed = getHtmlEmbedCodeEs();
+            if (embed != null) return embed;
+        }
+        String html = getHtmlContentEs();
+        if (html != null) return html;
+        return preconverthtml;
     }
     
     /**

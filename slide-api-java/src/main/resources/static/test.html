@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UISEP Slides — Test de Contenidos</title>
+<style>
+:root{--bg:#0f1117;--s1:#1a1d27;--s2:#22263a;--s3:#2a2f47;--border:#2d3250;--acc:#6c63ff;--acc2:#48cfad;--txt:#e2e8f0;--txt2:#94a3b8;--red:#f87171;--yel:#fbbf24;--grn:#4ade80}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;flex-direction:column;font-size:14px}
+a{color:var(--acc)}
+
+/* ── Header ── */
+.hdr{background:var(--s1);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.hdr-logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:1rem}
+.hdr-badges{display:flex;gap:8px;margin-left:auto}
+.conn-badge{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:.75rem;font-weight:600;border:1px solid}
+.conn-badge.ok{background:rgba(74,222,128,.1);border-color:rgba(74,222,128,.3);color:var(--grn)}
+.conn-badge.err{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3);color:var(--red)}
+.conn-badge.loading{background:rgba(108,99,255,.1);border-color:rgba(108,99,255,.3);color:var(--acc)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+
+/* ── Controls ── */
+.ctrl{background:var(--s1);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.ctrl input[type=number]{background:var(--s2);border:1px solid var(--border);color:var(--txt);padding:7px 12px;border-radius:8px;width:110px;outline:none;font-size:.9rem}
+.ctrl input:focus{border-color:var(--acc)}
+.btn{padding:7px 16px;border-radius:8px;border:none;cursor:pointer;font-size:.83rem;font-weight:600;transition:.15s;white-space:nowrap}
+.btn-p{background:var(--acc);color:#fff}.btn-p:hover{opacity:.85}
+.btn-s{background:var(--s2);color:var(--txt);border:1px solid var(--border)}.btn-s:hover{border-color:var(--acc);color:var(--acc)}
+.btn-s.on{border-color:var(--acc);color:var(--acc);background:rgba(108,99,255,.12)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.sep{width:1px;background:var(--border);height:28px;flex-shrink:0}
+.chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.chip{padding:4px 10px;border-radius:6px;background:var(--s3);border:1px solid var(--border);color:var(--txt2);cursor:pointer;font-size:.75rem}
+.chip:hover{border-color:var(--acc);color:var(--acc)}
+
+/* ── Main ── */
+main{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:14px}
+
+/* ── Info strip ── */
+.info-strip{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;gap:20px;flex-wrap:wrap;align-items:center}
+.ii{display:flex;flex-direction:column;gap:2px}
+.il{font-size:.7rem;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em}
+.iv{font-weight:600;font-size:.85rem}
+.match-ok{color:var(--grn)}.match-diff{color:var(--red)}.match-pend{color:var(--txt2)}
+
+/* ── Panels grid ── */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.panel{background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-height:540px}
+.panel-hdr{padding:10px 14px;background:var(--s2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.panel-hdr .src{font-weight:700;font-size:.82rem}
+.panel-hdr .url{font-size:.72rem;color:var(--txt2);margin-left:auto;font-family:monospace}
+.ph-api{border-top:2px solid var(--acc)}
+.ph-odoo{border-top:2px solid var(--acc2)}
+.panel-meta{padding:8px 14px;background:var(--s2);border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:center;font-size:.75rem;color:var(--txt2)}
+.t-num{font-size:1.1rem;font-weight:700;font-variant-numeric:tabular-nums}
+.t-fast{color:var(--grn)}.t-med{color:var(--yel)}.t-slow{color:var(--red)}
+.panel-body{flex:1;position:relative;overflow:hidden}
+.panel-body iframe{width:100%;height:100%;min-height:440px;border:none;background:#fff;display:block}
+.panel-body video{width:100%;max-height:440px;background:#000;display:block}
+.placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;height:300px;gap:10px;color:var(--txt2);padding:20px;text-align:center}
+.ph-icon{font-size:2.5rem}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--acc);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Badges ── */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:.71rem;font-weight:700}
+.b-ok{background:rgba(74,222,128,.15);color:var(--grn)}
+.b-err{background:rgba(248,113,113,.15);color:var(--red)}
+.b-info{background:rgba(108,99,255,.15);color:var(--acc)}
+.b-load{background:rgba(251,191,36,.15);color:var(--yel)}
+
+/* ── Raw JSON ── */
+.raw-wrap{background:var(--s1);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.raw-wrap details summary{padding:10px 14px;cursor:pointer;font-size:.8rem;color:var(--txt2);user-select:none;background:var(--s2)}
+.raw-wrap details summary:hover{color:var(--txt)}
+pre.json{background:var(--s2);padding:14px;font-size:.72rem;font-family:'JetBrains Mono',Consolas,monospace;overflow:auto;max-height:340px;white-space:pre-wrap;word-break:break-word;color:var(--txt)}
+
+/* ── Auth detail ── */
+.auth-detail{font-size:.72rem;color:var(--txt2);font-family:monospace;padding:6px 12px;background:var(--s2);border-radius:6px;border:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<div class="hdr">
+  <div class="hdr-logo">
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none"><rect width="26" height="26" rx="7" fill="#6c63ff"/><path d="M6 8h14M6 13h10M6 18h7" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+    UISEP · Slide Content Tester
+  </div>
+  <div class="hdr-badges">
+    <div class="conn-badge loading" id="badgeApi">
+      <div class="dot"></div><span>API verificando…</span>
+    </div>
+    <div class="conn-badge loading" id="badgeOdoo">
+      <div class="dot"></div><span>Odoo verificando…</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── CONTROLS ── -->
+<div class="ctrl">
+  <span style="color:var(--txt2);font-size:.8rem">Slide ID</span>
+  <input type="number" id="sid" placeholder="ej: 3394" min="1">
+  <button class="btn btn-p" id="btnLoad" onclick="loadBoth()">⚡ Cargar</button>
+  <div class="sep"></div>
+  <span style="color:var(--txt2);font-size:.8rem">Ejemplos</span>
+  <div class="chips">
+    <span class="chip" onclick="quick(3394)">3394 article (embed)</span>
+    <span class="chip" onclick="quick(165)">165 article (html)</span>
+    <span class="chip" onclick="quick(95)">95 bunny</span>
+    <span class="chip" onclick="quick(1264)">1264 youtube</span>
+    <span class="chip" onclick="quick(24643)">24643 local_ext</span>
+    <span class="chip" onclick="quick(43)">43 pdf</span>
+  </div>
+  <div class="sep"></div>
+  <button class="btn btn-s" id="btnRaw" onclick="toggleRaw()">{ } JSON</button>
+</div>
+
+<main>
+
+<!-- ── INFO STRIP ── -->
+<div class="info-strip" id="infoStrip" style="display:none">
+  <div class="ii"><div class="il">Tipo</div><div class="iv" id="iType">—</div></div>
+  <div class="ii"><div class="il">ID</div><div class="iv" id="iId">—</div></div>
+  <div class="ii"><div class="il">use_html_embed</div><div class="iv" id="iEmbed">—</div></div>
+  <div class="ii" style="flex:1;min-width:200px"><div class="il">Nombre</div><div class="iv" id="iName" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:400px">—</div></div>
+  <div class="ii"><div class="il">Contenido API vs Odoo</div><div class="iv" id="iMatch" class="match-pend">—</div></div>
+</div>
+
+<!-- ── PANELS ── -->
+<div class="grid">
+
+  <!-- API Panel -->
+  <div class="panel ph-api">
+    <div class="panel-hdr">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--acc)"></div>
+      <div class="src">API — Supabase Cache</div>
+      <div class="url">slides.universidadisep.com</div>
+    </div>
+    <div class="panel-meta" id="metaApi">
+      <span class="t-num" id="tApi">—</span>
+      <span id="szApi">—</span>
+      <span id="stApi">Esperando…</span>
+    </div>
+    <div class="panel-body" id="bodyApi">
+      <div class="placeholder"><div class="ph-icon">📦</div><div>Datos desde el caché procesado<br><small>slides.universidadisep.com/api/v1/slides/{id}</small></div></div>
+    </div>
+  </div>
+
+  <!-- Odoo Panel -->
+  <div class="panel ph-odoo">
+    <div class="panel-hdr">
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--acc2)"></div>
+      <div class="src">Odoo Producción — XML-RPC directo</div>
+      <div class="url">app.universidadisep.com</div>
+    </div>
+    <div class="panel-meta" id="metaOdoo">
+      <span class="t-num" id="tOdoo">—</span>
+      <span id="szOdoo">—</span>
+      <span id="stOdoo">Esperando…</span>
+      <span id="odooAuth" style="margin-left:auto"></span>
+    </div>
+    <div class="panel-body" id="bodyOdoo">
+      <div class="placeholder"><div class="ph-icon">🔗</div><div>Llamada XML-RPC directa a producción<br><small>app.universidadisep.com/xmlrpc/2/object</small></div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── RAW JSON ── -->
+<div id="rawWrap" style="display:none">
+  <div class="raw-wrap">
+    <details open>
+      <summary>📡 Respuesta API — slides.universidadisep.com</summary>
+      <pre class="json" id="rawApi">—</pre>
+    </details>
+  </div>
+  <div class="raw-wrap" style="margin-top:10px">
+    <details open>
+      <summary>🔗 Respuesta Odoo XML-RPC — app.universidadisep.com</summary>
+      <pre class="json" id="rawOdoo">—</pre>
+    </details>
+  </div>
+</div>
+
+</main>
+
+<script>
+const API  = '/api/v1/slides';
+const PRXY = '/api/v1/proxy/odoo';
+const STAT = '/api/v1/proxy/odoo-status';
+
+let dApi = null, dOdoo = null;
+
+// ── Verify connections on load ──────────────────────────────────
+async function checkConnections() {
+  // API health
+  try {
+    const r = await fetch('/api/v1/admin/health', {signal: AbortSignal.timeout(5000)});
+    setBadge('badgeApi', r.ok, 'API OK', 'API Error');
+  } catch { setBadge('badgeApi', false, '', 'API sin respuesta'); }
+
+  // Odoo production auth
+  try {
+    const r = await fetch(STAT, {signal: AbortSignal.timeout(15000)});
+    const d = await r.json();
+    if (d.ok) {
+      setBadge('badgeOdoo', true, `Odoo UID ${d.uid} · ${d.authTimeMs}ms`);
+      document.getElementById('odooAuth').innerHTML =
+        `<span class="badge b-ok">✓ uid=${d.uid}</span> <span style="font-family:monospace;font-size:.7rem;color:var(--txt2)">${d.user}</span>`;
+    } else {
+      setBadge('badgeOdoo', false, '', 'Odoo: ' + (d.error || 'Error'));
+    }
+  } catch(e) { setBadge('badgeOdoo', false, '', 'Odoo sin respuesta'); }
+}
+
+function setBadge(id, ok, okText, errText) {
+  const el = document.getElementById(id);
+  el.className = 'conn-badge ' + (ok ? 'ok' : 'err');
+  el.innerHTML = `<div class="dot"></div><span>${ok ? okText : errText}</span>`;
+}
+
+// ── Load ────────────────────────────────────────────────────────
+function quick(id) {
+  document.getElementById('sid').value = id;
+  loadBoth();
+}
+
+async function loadBoth() {
+  const id = document.getElementById('sid').value.trim();
+  if (!id) return;
+  document.getElementById('btnLoad').disabled = true;
+  dApi = null; dOdoo = null;
+
+  setLoading('Api'); setLoading('Odoo');
+  setBody('bodyApi',  loading());
+  setBody('bodyOdoo', loading());
+  document.getElementById('infoStrip').style.display = 'none';
+
+  const [rApi, rOdoo] = await Promise.all([
+    fetchTimed(`${API}/${id}`),
+    fetchTimed(`${PRXY}/${id}`)
+  ]);
+
+  dApi  = rApi;
+  dOdoo = rOdoo;
+
+  updateMeta('Api',  rApi);
+  updateMeta('Odoo', rOdoo);
+  renderPanel('bodyApi',  rApi?.data ? rApi.data : null, false);
+  renderPanel('bodyOdoo', rOdoo?.data ? normalizeOdoo(rOdoo.data) : null, false);
+  updateInfoStrip();
+
+  document.getElementById('rawApi').textContent  = JSON.stringify(rApi?.data,  null, 2);
+  document.getElementById('rawOdoo').textContent = JSON.stringify(rOdoo?.data, null, 2);
+  document.getElementById('btnLoad').disabled = false;
+}
+
+async function fetchTimed(url) {
+  const t0 = performance.now();
+  try {
+    const r = await fetch(url);
+    const ms = Math.round(performance.now() - t0);
+    if (!r.ok) return { ok: false, ms, status: r.status, data: null, size: 0 };
+    const text = await r.text();
+    return { ok: true, ms, status: r.status, data: JSON.parse(text), size: text.length };
+  } catch(e) {
+    return { ok: false, ms: Math.round(performance.now() - t0), status: 0, data: null, size: 0, error: e.message };
+  }
+}
+
+// ── Meta bar ────────────────────────────────────────────────────
+function setLoading(src) {
+  document.getElementById('t'+src).textContent = '…';
+  document.getElementById('t'+src).className = 't-num';
+  document.getElementById('sz'+src).textContent = '';
+  document.getElementById('st'+src).innerHTML = '<span class="badge b-load">Cargando</span>';
+}
+
+function updateMeta(src, r) {
+  if (!r) return;
+  const tEl = document.getElementById('t'+src);
+  tEl.textContent = r.ms + 'ms';
+  tEl.className = 't-num ' + (r.ms < 300 ? 't-fast' : r.ms < 1500 ? 't-med' : 't-slow');
+  document.getElementById('sz'+src).textContent = r.size > 0 ? (r.size/1024).toFixed(1)+' KB' : '';
+  document.getElementById('st'+src).innerHTML = r.ok
+    ? `<span class="badge b-ok">✓ ${r.status}</span>`
+    : `<span class="badge b-err">✗ ${r.status || r.error || 'Error'}</span>`;
+}
+
+// ── Info strip ─────────────────────────────────────────────────
+function updateInfoStrip() {
+  const api  = dApi?.data;
+  const odoo = dOdoo?.data;
+  const d = api || (odoo ? normalizeOdoo(odoo) : null);
+  if (!d) return;
+
+  document.getElementById('infoStrip').style.display = 'flex';
+  document.getElementById('iType').textContent  = d.slideType || odoo?.slide_type || '—';
+  document.getElementById('iId').textContent    = d.id || odoo?.id || '—';
+  document.getElementById('iEmbed').textContent = 
+    api?.useHtmlEmbed != null ? (api.useHtmlEmbed ? '✅ sí' : '❌ no')
+    : odoo?.use_html_embed != null ? (odoo.use_html_embed ? '✅ sí' : '❌ no') : '—';
+
+  const name = api?.name || (odoo ? (Array.isArray(odoo.name) ? odoo.name[1] : odoo.name) : '—');
+  document.getElementById('iName').textContent = name || '—';
+
+  // Content match comparison
+  if (api && odoo) {
+    const apiHtml  = api.htmlContent || '';
+    const odooNorm = normalizeOdoo(odoo);
+    const odooHtml = odooNorm.htmlContent || '';
+    const apiUrl   = api.contentUrl || '';
+    const odooUrl  = odooNorm.contentUrl || '';
+
+    let matchEl = document.getElementById('iMatch');
+    if (apiHtml && odooHtml) {
+      const pct = Math.round(100 * Math.min(apiHtml.length, odooHtml.length) / Math.max(apiHtml.length, odooHtml.length));
+      const cls = pct > 90 ? 'match-ok' : pct > 70 ? 'match-pend' : 'match-diff';
+      matchEl.className = 'iv ' + cls;
+      matchEl.textContent = `HTML ${pct}% similitud (API ${kb(apiHtml.length)} vs Odoo ${kb(odooHtml.length)})`;
+    } else if (apiUrl && odooUrl) {
+      matchEl.className = 'iv ' + (apiUrl === odooUrl ? 'match-ok' : 'match-diff');
+      matchEl.textContent = apiUrl === odooUrl ? 'URL idéntica ✓' : 'URL diferente ⚠';
+    } else if (apiHtml && !odooHtml) {
+      matchEl.className = 'iv match-diff';
+      matchEl.textContent = 'API tiene HTML, Odoo vacío';
+    } else if (!apiHtml && !apiUrl) {
+      matchEl.className = 'iv match-diff';
+      matchEl.textContent = 'API sin contenido';
+    } else {
+      matchEl.className = 'iv match-pend';
+      matchEl.textContent = '—';
+    }
+  }
+}
+
+function kb(n) { return n > 1024 ? (n/1024).toFixed(0)+'KB' : n+'B'; }
+
+// ── Normalize Odoo response to API shape ────────────────────────
+function normalizeOdoo(d) {
+  if (!d) return null;
+  const type = d.slide_type || '';
+  let html = '';
+  if (d.use_html_embed && d.html_embed_code && typeof d.html_embed_code === 'string')
+    html = d.html_embed_code;
+  else if (d.html_content && typeof d.html_content === 'string')
+    html = d.html_content;
+  else if (d.preconverthtml && typeof d.preconverthtml === 'string')
+    html = d.preconverthtml;
+
+  let url = '';
+  if (type === 'bunny' || type === 'video') url = d.bunny_url || '';
+  else if (type === 'youtube_video')         url = d.url || '';
+  else if (type === 'local_external')        url = d.external_url || d.url || '';
+  else if (type === 'pdf' || type === 'presentation' || type === 'infographic')
+    url = `https://app.universidadisep.com/web/content/slide.slide/${d.id}/datas/`;
+
+  const ytId = d.youtube_id || (type === 'youtube_video' ? extractYtId(url) : null);
+
+  return { id: d.id, slideType: type, htmlContent: html, contentUrl: url, youtubeId: ytId,
+           name: Array.isArray(d.name) ? d.name[1] : d.name };
+}
+
+// ── Render ──────────────────────────────────────────────────────
+function renderPanel(bodyId, d, compact) {
+  if (!d) {
+    setBody(bodyId, `<div class="placeholder"><div class="ph-icon">❌</div><div>Sin datos o error al cargar</div></div>`);
+    return;
+  }
+  const type = d.slideType || '';
+
+  if (d.htmlContent && d.htmlContent.length > 10) {
+    const isDoc = d.htmlContent.trimStart().startsWith('<!') || d.htmlContent.trimStart().startsWith('<html');
+    const full  = isDoc ? d.htmlContent
+      : `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+         <style>body{font-family:system-ui,sans-serif;padding:16px;margin:0;line-height:1.6;color:#1a1a2e}</style>
+         </head><body>${d.htmlContent}</body></html>`;
+    const el = document.getElementById(bodyId);
+    el.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.sandbox = 'allow-scripts allow-same-origin allow-popups allow-forms';
+    const blob = new Blob([full], {type:'text/html'});
+    iframe.src = URL.createObjectURL(blob);
+    iframe.style.cssText = 'width:100%;height:520px;border:none;background:#fff;display:block';
+    el.appendChild(iframe);
+    return;
+  }
+
+  if ((type === 'bunny' || type === 'video') && d.contentUrl) {
+    setBody(bodyId, `<div style="background:#000;height:460px;display:flex;align-items:center;justify-content:center">
+      <iframe src="${esc(d.contentUrl)}" allow="autoplay;fullscreen" allowfullscreen
+        style="width:100%;height:100%;border:none"></iframe></div>`);
+    return;
+  }
+
+  if (type === 'youtube_video' && (d.youtubeId || d.contentUrl)) {
+    const ytId = d.youtubeId || extractYtId(d.contentUrl);
+    setBody(bodyId, `<div style="background:#000;height:460px;display:flex;align-items:center">
+      <iframe src="https://www.youtube.com/embed/${ytId}?rel=0"
+        allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture"
+        allowfullscreen style="width:100%;height:100%;border:none"></iframe></div>`);
+    return;
+  }
+
+  if (type === 'local_external' && d.contentUrl) {
+    const isVid = /\.(mp4|webm|ogg)(\?|$)/i.test(d.contentUrl);
+    if (isVid) {
+      setBody(bodyId, `<div style="background:#000;height:460px;display:flex;align-items:center">
+        <video controls controlslist="nodownload" style="width:100%;max-height:460px">
+          <source src="${esc(d.contentUrl)}">
+        </video></div>`);
+    } else {
+      setBody(bodyId, `<iframe src="${esc(d.contentUrl)}"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        style="width:100%;height:520px;border:none;background:#fff;display:block"></iframe>`);
+    }
+    return;
+  }
+
+  if ((type === 'pdf' || type === 'presentation') && d.contentUrl) {
+    setBody(bodyId, `<div style="padding:16px;display:flex;flex-direction:column;gap:12px;height:100%">
+      <div class="badge b-load" style="width:fit-content;padding:6px 12px">
+        ⚠️ PDF requiere sesión Odoo activa
+      </div>
+      <a href="${esc(d.contentUrl)}" target="_blank" class="btn btn-s" style="width:fit-content">
+        Abrir PDF en nueva pestaña →
+      </a>
+      <embed src="${esc(d.contentUrl)}" type="application/pdf" style="flex:1;width:100%;min-height:400px;border-radius:8px">
+    </div>`);
+    return;
+  }
+
+  setBody(bodyId, `<div class="placeholder">
+    <div class="ph-icon">❓</div>
+    <div>Tipo: <strong>${type || 'desconocido'}</strong></div>
+    ${d.contentUrl ? `<a href="${esc(d.contentUrl)}" target="_blank">Abrir URL →</a>` : '<div>Sin contenido renderizable</div>'}
+  </div>`);
+}
+
+function setBody(id, html) { document.getElementById(id).innerHTML = html; }
+function loading() { return '<div class="placeholder"><div class="spinner"></div><div>Cargando desde producción…</div></div>'; }
+function esc(s) { return s ? s.replace(/"/g,'&quot;') : ''; }
+function extractYtId(url) {
+  if (!url) return '';
+  const m = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : '';
+}
+
+function toggleRaw() {
+  const el = document.getElementById('rawWrap');
+  const btn = document.getElementById('btnRaw');
+  const visible = el.style.display !== 'none';
+  el.style.display = visible ? 'none' : 'block';
+  btn.classList.toggle('on', !visible);
+}
+
+document.getElementById('sid').addEventListener('keydown', e => { if (e.key === 'Enter') loadBoth(); });
+
+// Check connections immediately on load
+checkConnections();
+</script>
+</body>
+</html>
