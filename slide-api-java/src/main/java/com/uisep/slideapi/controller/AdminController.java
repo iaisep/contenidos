@@ -2,6 +2,8 @@ package com.uisep.slideapi.controller;
 
 import com.uisep.slideapi.dto.SlideDTO.*;
 import com.uisep.slideapi.entity.processed.SlideSyncLog;
+import com.uisep.slideapi.entity.processed.ExcludedSlide;
+import com.uisep.slideapi.repository.processed.ExcludedSlideRepository;
 import com.uisep.slideapi.repository.processed.ProcessedSlideRepository;
 import com.uisep.slideapi.repository.processed.SlideSyncLogRepository;
 import com.uisep.slideapi.service.SlideSyncService;
@@ -29,6 +31,8 @@ public class AdminController {
     private final SlideSyncService syncService;
     private final SlideSyncLogRepository syncLogRepo;
     private final ProcessedSlideRepository processedSlideRepo;
+    private final ExcludedSlideRepository excludedSlideRepo;
+    private final com.uisep.slideapi.repository.replica.SlideSlideReplicaRepository replicaSlideRepo;
 
     @GetMapping("/health")
     @Operation(
@@ -376,6 +380,52 @@ public class AdminController {
                 return m;
             })
             .toList();
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/slides/excluded/sync")
+    @Operation(summary = "Sincronizar slides excluidos",
+               description = "Migra desde la replica Odoo todos los slides excluidos del sync (inactivos, no publicados, canal no apto) a la tabla excluded_slides de la API. Operacion upsert.")
+    @ApiResponse(responseCode = "200", description = "Total de slides excluidos migrados")
+    public ResponseEntity<Map<String, Object>> syncExcludedSlides() {
+        List<Object[]> rows = replicaSlideRepo.findExcludedSlides();
+        List<ExcludedSlide> batch = rows.stream().map(r -> ExcludedSlide.builder()
+            .id(((Number) r[0]).intValue())
+            .channelId(r[1] != null ? ((Number) r[1]).intValue() : null)
+            .createDate(r[2] instanceof java.sql.Timestamp ts ? ts.toLocalDateTime()
+                        : r[2] instanceof java.time.LocalDateTime ld ? ld : null)
+            .reason((String) r[3])
+            .syncedAt(java.time.LocalDateTime.now())
+            .build()).toList();
+        excludedSlideRepo.saveAll(batch);
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("synced", batch.size());
+        result.put("byReason", batch.stream().collect(
+            java.util.stream.Collectors.groupingBy(ExcludedSlide::getReason, java.util.stream.Collectors.counting())));
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/slides/excluded")
+    @Operation(summary = "Slides excluidos del sync",
+               description = "Lista slides que no entran al sync por estar inactivos, no publicados o en canal no apto. Requiere ejecutar /sync primero. Filtros: reason, channelId.")
+    @ApiResponse(responseCode = "200", description = "Pagina de slides excluidos")
+    public ResponseEntity<Page<ExcludedSlide>> getExcludedSlides(
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) Integer channelId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "100") int size) {
+        size = Math.min(size, 500);
+        var pageable = PageRequest.of(page, size);
+        Page<ExcludedSlide> result;
+        if (channelId != null && reason != null) {
+            result = excludedSlideRepo.findByChannelIdAndReasonOrderByCreateDateDesc(channelId, reason, pageable);
+        } else if (channelId != null) {
+            result = excludedSlideRepo.findByChannelIdOrderByCreateDateDesc(channelId, pageable);
+        } else if (reason != null) {
+            result = excludedSlideRepo.findByReasonOrderByCreateDateDesc(reason, pageable);
+        } else {
+            result = excludedSlideRepo.findByOrderByCreateDateDesc(pageable);
+        }
         return ResponseEntity.ok(result);
     }
 }

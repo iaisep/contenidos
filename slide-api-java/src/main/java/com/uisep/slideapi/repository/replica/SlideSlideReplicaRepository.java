@@ -138,4 +138,25 @@ public interface SlideSlideReplicaRepository extends JpaRepository<SlideSlideRep
     // IDs y write_date de la réplica para comparar con BD procesada
     @Query(value = "SELECT s.id, s.write_date FROM slide_slide s WHERE s.id IN :ids", nativeQuery = true)
     List<Object[]> findWriteDatesByIds(@Param("ids") List<Integer> ids);
+
+    // Slides excluidos del sync con su razon y fecha de creacion
+    @Query(value = """
+        SELECT s.id, s.channel_id, s.create_date,
+          CASE
+            WHEN s.active = false THEN 'INACTIVE'
+            WHEN s.active = true AND s.is_published = false THEN 'NOT_PUBLISHED'
+            ELSE 'CHANNEL_NOT_ACTIVE'
+          END AS reason
+        FROM slide_slide s
+        WHERE s.active = false
+           OR s.is_published = false
+           OR NOT EXISTS (
+               SELECT 1 FROM slide_channel sc
+               WHERE sc.id = s.channel_id
+                 AND sc.active = true
+                 AND sc.is_published = true
+           )
+        ORDER BY s.id
+        """, nativeQuery = true)
+    List<Object[]> findExcludedSlides();
 }
