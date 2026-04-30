@@ -2,6 +2,7 @@ package com.uisep.slideapi.controller;
 
 import com.uisep.slideapi.dto.SlideDTO.*;
 import com.uisep.slideapi.entity.processed.SlideSyncLog;
+import com.uisep.slideapi.repository.processed.ProcessedSlideRepository;
 import com.uisep.slideapi.repository.processed.SlideSyncLogRepository;
 import com.uisep.slideapi.service.SlideSyncService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,6 +28,7 @@ public class AdminController {
 
     private final SlideSyncService syncService;
     private final SlideSyncLogRepository syncLogRepo;
+    private final ProcessedSlideRepository processedSlideRepo;
 
     @GetMapping("/health")
     @Operation(
@@ -356,6 +358,24 @@ public class AdminController {
             .message(e.getMessage())
             .build());
 
+        return ResponseEntity.ok(result);
+    }
+
+
+    @GetMapping("/slides/non-usable")
+    @Operation(summary = "Slides no usables",
+               description = "Slides activos pero no publicados (is_published=false). Solo devuelve slideId y channelId para revision previa a depuracion.")
+    @ApiResponse(responseCode = "200", description = "Lista de slides no usables")
+    public ResponseEntity<List<Map<String, Integer>>> getNonUsableSlides() {
+        List<Map<String, Integer>> result = processedSlideRepo.findNonUsableIdAndChannelId()
+            .stream()
+            .map(row -> {
+                Map<String, Integer> m = new java.util.LinkedHashMap<>();
+                m.put("slideId", ((Number) row[0]).intValue());
+                m.put("channelId", row[1] != null ? ((Number) row[1]).intValue() : null);
+                return m;
+            })
+            .toList();
         return ResponseEntity.ok(result);
     }
 }

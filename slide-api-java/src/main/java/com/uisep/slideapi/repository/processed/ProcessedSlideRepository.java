@@ -110,4 +110,8 @@ public interface ProcessedSlideRepository extends JpaRepository<ProcessedSlide, 
     // IDs y fechas de escritura Odoo para slides procesados (detección de cambios)
     @Query("SELECT s.id, s.odooWriteDate FROM ProcessedSlide s WHERE s.id IN :ids")
     List<Object[]> findWriteDatesByIds(@Param("ids") List<Integer> ids);
+
+    // Slides activos pero no publicados: solo id y channelId
+    @Query("SELECT s.id, s.channelId FROM ProcessedSlide s WHERE s.active = true AND s.isPublished = false ORDER BY s.channelId ASC, s.id ASC")
+    List<Object[]> findNonUsableIdAndChannelId();
 }
