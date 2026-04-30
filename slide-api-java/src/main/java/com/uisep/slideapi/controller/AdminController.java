@@ -322,4 +322,40 @@ public class AdminController {
 
         return ResponseEntity.ok(summaries);
     }
+
+
+    @GetMapping("/sync/changes")
+    @Operation(summary = "Slides creados o modificados")
+    @ApiResponse(responseCode = "200", description = "Pagina de cambios")
+    public ResponseEntity<Page<SyncLogEntry>> getSyncChanges(
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+
+        size = Math.min(size, 200);
+        LocalDateTime dtFrom = from != null ? LocalDateTime.parse(from) : LocalDateTime.now().minusDays(7);
+        LocalDateTime dtTo   = to   != null ? LocalDateTime.parse(to)   : LocalDateTime.now().plusMinutes(1);
+
+        Page<SlideSyncLog> raw = syncLogRepo.findChanges(dtFrom, dtTo, PageRequest.of(page, size));
+
+        Page<SyncLogEntry> result = raw.map(e -> SyncLogEntry.builder()
+            .id(e.getId())
+            .syncRunId(e.getSyncRunId())
+            .syncedAt(e.getSyncedAt())
+            .slideId(e.getSlideId())
+            .slideName(e.getSlideName())
+            .action(e.getAction().name())
+            .slideType(e.getSlideType())
+            .channelId(e.getChannelId())
+            .channelName(e.getChannelName())
+            .odooWriteDate(e.getOdooWriteDate())
+            .originalSizeBytes(e.getOriginalSizeBytes())
+            .processedSizeBytes(e.getProcessedSizeBytes())
+            .imagesExtracted(e.getImagesExtracted())
+            .message(e.getMessage())
+            .build());
+
+        return ResponseEntity.ok(result);
+    }
 }

@@ -34,7 +34,7 @@ public interface SlideSyncLogRepository extends JpaRepository<SlideSyncLog, Long
                SUM(CASE WHEN action = 'CREATED' THEN 1 ELSE 0 END)    AS created,
                SUM(CASE WHEN action = 'UPDATED' THEN 1 ELSE 0 END)    AS updated,
                SUM(CASE WHEN action = 'FAILED'  THEN 1 ELSE 0 END)    AS failed
-        FROM slide_api.slide_sync_log
+        FROM public.slide_sync_log
         GROUP BY sync_run_id
         ORDER BY MIN(synced_at) DESC
         LIMIT :limit
@@ -42,8 +42,25 @@ public interface SlideSyncLogRepository extends JpaRepository<SlideSyncLog, Long
     List<Object[]> findSyncRunSummaries(@Param("limit") int limit);
 
     // Total de ejecuciones distintas (para paginación del listado de runs)
-    @Query(value = "SELECT COUNT(DISTINCT sync_run_id) FROM slide_api.slide_sync_log", nativeQuery = true)
+    @Query(value = "SELECT COUNT(DISTINCT sync_run_id) FROM public.slide_sync_log", nativeQuery = true)
     long countDistinctRuns();
+
+    // Cambios recientes: CREATED y UPDATED en rango de fechas
+    @Query(value = """
+        SELECT * FROM public.slide_sync_log
+        WHERE action IN ('CREATED', 'UPDATED')
+          AND synced_at BETWEEN :from AND :to
+        ORDER BY synced_at DESC
+        """, nativeQuery = true,
+        countQuery = """
+        SELECT COUNT(*) FROM public.slide_sync_log
+        WHERE action IN ('CREATED', 'UPDATED')
+          AND synced_at BETWEEN :from AND :to
+        """)
+    Page<SlideSyncLog> findChanges(
+        @Param("from") LocalDateTime from,
+        @Param("to") LocalDateTime to,
+        Pageable pageable);
 
     // Conteos rápidos
     long countByAction(SlideSyncLog.SyncAction action);
