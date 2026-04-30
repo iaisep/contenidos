@@ -48,11 +48,11 @@ public class SlideSyncService {
     @Value("${migration.base64.batch-size:10}")
     private int batchSize;
     
-    @Value("${server.port:8080}")
-    private int serverPort;
-    
+    @Value("${api.base-url:http://localhost:8080}")
+    private String apiBaseUrl;
+
     private String getBaseUrl() {
-        return "http://localhost:" + serverPort;
+        return apiBaseUrl;
     }
     
     /**
