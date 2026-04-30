@@ -3,6 +3,7 @@ package com.uisep.slideapi.repository.processed;
 import com.uisep.slideapi.entity.processed.SlideProcessingStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -25,6 +26,7 @@ public interface SlideProcessingStatusRepository extends JpaRepository<SlideProc
     @Query("SELECT s.slideId FROM SlideProcessingStatus s WHERE s.status = 'COMPLETED'")
     List<Integer> findCompletedSlideIds();
     
+    @Transactional
     @Modifying
     @Query("UPDATE SlideProcessingStatus s SET s.status = :status WHERE s.slideId IN :ids")
     int updateStatusByIds(@Param("status") SlideProcessingStatus.ProcessingStatus status,
